@@ -86,8 +86,11 @@ const (
 	DepositrootGas     uint64 = 3000 // Deposit root operation gas price
 	Sha256BaseGas      uint64 = 60   // Base price for a SHA256 operation
 	Sha256PerWordGas   uint64 = 12   // Per-word price for a SHA256 operation
+	Shake256BaseGas    uint64 = 240  // Base price for a SHAKE256 operation
+	Shake256PerWordGas uint64 = 48   // Per-word price for a SHAKE256 operation
 	IdentityBaseGas    uint64 = 15   // Base price for a data copy operation
 	IdentityPerWordGas uint64 = 3    // Per-work price for a data copy operation
+	MLDSA87VerifyGas   uint64 = 250000
 
 	// The Refund Quotient is the cap on how much of the used gas can be refunded. Before EIP-3529,
 	// up to half the consumed gas could be refunded. Redefined as 1/5th in EIP-3529

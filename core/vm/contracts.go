@@ -19,6 +19,7 @@ package vm
 import (
 	"bytes"
 	"crypto/sha256"
+	"crypto/sha3"
 	"encoding/binary"
 	gomath "math"
 	"math/big"
@@ -28,6 +29,7 @@ import (
 	"github.com/theQRL/go-qrl/common"
 	"github.com/theQRL/go-qrl/common/math"
 	"github.com/theQRL/go-qrl/params"
+	mldsa87 "github.com/theQRL/go-qrllib/crypto/ml_dsa_87"
 )
 
 // PrecompiledContract is the basic interface for native Go contracts. The implementation
@@ -43,8 +45,10 @@ type PrecompiledContract interface {
 var PrecompiledContractsZond = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{1}): &depositroot{},
 	common.BytesToAddress([]byte{2}): &sha256hash{},
+	common.BytesToAddress([]byte{3}): &shake256hash{},
 	common.BytesToAddress([]byte{4}): &dataCopy{},
 	common.BytesToAddress([]byte{5}): &bigModExp{},
+	common.BytesToAddress([]byte{6}): &mldsa87Verify{},
 }
 
 var (
@@ -177,6 +181,58 @@ func (c *sha256hash) RequiredGas(input []byte) uint64 {
 func (c *sha256hash) Run(input []byte) ([]byte, error) {
 	h := sha256.Sum256(input)
 	return h[:], nil
+}
+
+// shake256hash implements SHAKE256 with a fixed 512-bit output.
+type shake256hash struct{}
+
+// RequiredGas returns the gas required to execute the precompiled contract.
+func (c *shake256hash) RequiredGas(input []byte) uint64 {
+	words := toWordSize(uint64(len(input)))
+	if words > (gomath.MaxUint64-params.Shake256BaseGas)/params.Shake256PerWordGas {
+		return gomath.MaxUint64
+	}
+	return words*params.Shake256PerWordGas + params.Shake256BaseGas
+}
+
+func (c *shake256hash) Run(input []byte) ([]byte, error) {
+	return sha3.SumSHAKE256(input, 64), nil
+}
+
+// mldsa87Verify verifies a detached FIPS 204 ML-DSA-87 signature.
+// Input is digest[64] || signature[4627] || publicKey[2592] || context[0..255].
+type mldsa87Verify struct{}
+
+const (
+	mldsa87DigestSize       = 64
+	mldsa87MaxContextSize   = 255
+	mldsa87BooleanWordSize  = 64
+	mldsa87FixedInputLength = mldsa87DigestSize + mldsa87.CRYPTO_BYTES + mldsa87.CRYPTO_PUBLIC_KEY_BYTES
+)
+
+func (c *mldsa87Verify) RequiredGas([]byte) uint64 {
+	return params.MLDSA87VerifyGas
+}
+
+func (c *mldsa87Verify) Run(input []byte) ([]byte, error) {
+	result := make([]byte, mldsa87BooleanWordSize)
+	if len(input) < mldsa87FixedInputLength || len(input) > mldsa87FixedInputLength+mldsa87MaxContextSize {
+		return result, nil
+	}
+
+	digestEnd := mldsa87DigestSize
+	signatureEnd := digestEnd + mldsa87.CRYPTO_BYTES
+	publicKeyEnd := signatureEnd + mldsa87.CRYPTO_PUBLIC_KEY_BYTES
+
+	var signature [mldsa87.CRYPTO_BYTES]byte
+	copy(signature[:], input[digestEnd:signatureEnd])
+	var publicKey [mldsa87.CRYPTO_PUBLIC_KEY_BYTES]byte
+	copy(publicKey[:], input[signatureEnd:publicKeyEnd])
+
+	if mldsa87.Verify(input[publicKeyEnd:], input[:digestEnd], signature, &publicKey) {
+		result[len(result)-1] = 1
+	}
+	return result, nil
 }
 
 // data copy implemented as a native contract.

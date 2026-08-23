@@ -47,22 +47,21 @@ type precompiledFailureTest struct {
 }
 */
 
-// allPrecompiles does not map to the actual set of precompiles, as it also contains
-// repriced versions of precompiles at certain slots
-var allPrecompiles = map[common.Address]PrecompiledContract{
-	common.BytesToAddress([]byte{1}): &depositroot{},
-	common.BytesToAddress([]byte{2}): &sha256hash{},
-	common.BytesToAddress([]byte{3}): &dataCopy{},
-	common.BytesToAddress([]byte{4}): &bigModExp{},
-}
+var allPrecompiles = PrecompiledContractsZond
 
 func precompileAddress(n string) string {
 	return "Q" + strings.Repeat("0", 2*common.AddressLength-len(n)) + n
 }
 
 func testPrecompiled(addr string, test precompiledTest, t *testing.T) {
-	contractAddr, _ := common.NewAddressFromString(addr)
-	p := allPrecompiles[contractAddr]
+	contractAddr, err := common.NewAddressFromString(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := allPrecompiles[contractAddr]
+	if !ok {
+		t.Fatalf("no precompile registered at %s", addr)
+	}
 	in := common.Hex2Bytes(test.Input)
 	gas := p.RequiredGas(in)
 	t.Run(fmt.Sprintf("%s-Gas=%d", test.Name, gas), func(t *testing.T) {
@@ -83,8 +82,14 @@ func testPrecompiled(addr string, test precompiledTest, t *testing.T) {
 }
 
 func testPrecompiledOOG(addr string, test precompiledTest, t *testing.T) {
-	contractAddr, _ := common.NewAddressFromString(addr)
-	p := allPrecompiles[contractAddr]
+	contractAddr, err := common.NewAddressFromString(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := allPrecompiles[contractAddr]
+	if !ok {
+		t.Fatalf("no precompile registered at %s", addr)
+	}
 	in := common.Hex2Bytes(test.Input)
 	gas := p.RequiredGas(in) - 1
 
@@ -125,8 +130,14 @@ func benchmarkPrecompiled(addr string, test precompiledTest, bench *testing.B) {
 	if test.NoBenchmark {
 		return
 	}
-	contractAddr, _ := common.NewAddressFromString(addr)
-	p := allPrecompiles[contractAddr]
+	contractAddr, parseErr := common.NewAddressFromString(addr)
+	if parseErr != nil {
+		bench.Fatal(parseErr)
+	}
+	p, ok := allPrecompiles[contractAddr]
+	if !ok {
+		bench.Fatalf("no precompile registered at %s", addr)
+	}
 	in := common.Hex2Bytes(test.Input)
 	reqGas := p.RequiredGas(in)
 
@@ -168,7 +179,7 @@ func BenchmarkPrecompiledDepositroot(bench *testing.B) {
 		Expected: "862581de9cddb8c039878d5a6d83409556361fbdd6ecd17e62df68c377db2362",
 		Name:     "",
 	}
-	benchmarkPrecompiled("01", t, bench)
+	benchmarkPrecompiled(precompileAddress("01"), t, bench)
 }
 
 // Benchmarks the sample inputs from the SHA256 precompile.
@@ -178,7 +189,7 @@ func BenchmarkPrecompiledSha256(bench *testing.B) {
 		Expected: "811c7003375852fabd0d362e40e68607a12bdabae61a7d068fe5fdd1dbbf2a5d",
 		Name:     "128",
 	}
-	benchmarkPrecompiled("02", t, bench)
+	benchmarkPrecompiled(precompileAddress("02"), t, bench)
 }
 
 // Benchmarks the sample inputs from the identiy precompile.
@@ -188,15 +199,15 @@ func BenchmarkPrecompiledIdentity(bench *testing.B) {
 		Expected: "38d18acb67d25c8bb9942764b62f18e17054f66a817bd4295423adf9ed98873e000000000000000000000000000000000000000000000000000000000000001b38d18acb67d25c8bb9942764b62f18e17054f66a817bd4295423adf9ed98873e789d1dd423d25f0772d2748d60f7e4b81bb14d086eba8e8e8efb6dcff8a4ae02",
 		Name:     "128",
 	}
-	benchmarkPrecompiled("04", t, bench)
+	benchmarkPrecompiled(precompileAddress("04"), t, bench)
 }
 
 // Tests the sample inputs from the ModExp.
 func TestPrecompiledModExp(t *testing.T) {
-	testJson("modexp", precompileAddress("04"), t)
+	testJson("modexp", precompileAddress("05"), t)
 }
 func BenchmarkPrecompiledModExp(b *testing.B) {
-	benchJson("modexp", precompileAddress("04"), b)
+	benchJson("modexp", precompileAddress("05"), b)
 }
 
 // Tests OOG
@@ -206,7 +217,7 @@ func TestPrecompiledModExpOOG(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, test := range modexpTests {
-		testPrecompiledOOG(precompileAddress("04"), test, t)
+		testPrecompiledOOG(precompileAddress("05"), test, t)
 	}
 }
 
