@@ -19,6 +19,7 @@ package vm
 import (
 	"bytes"
 	"crypto/sha256"
+	"crypto/sha3"
 	"encoding/binary"
 	gomath "math"
 	"math/big"
@@ -51,6 +52,7 @@ var PrecompiledContractsZond = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{3}): &mldsa87Verify{},
 	common.BytesToAddress([]byte{4}): &dataCopy{},
 	common.BytesToAddress([]byte{5}): &bigModExp{},
+	common.BytesToAddress([]byte{6}): &shake256hash{},
 }
 
 var (
@@ -131,8 +133,13 @@ func (c *depositroot) Run(input []byte) ([]byte, error) {
 }
 
 const (
+	// mldsa87VerifyDigestLength is the width of the message representative:
+	// one QRVM word, matching the SHAKE256 precompile output. Earlier builds
+	// read common.HashLength (32 bytes); the 64-byte width is the interface
+	// ratified for the next testnet release.
+	mldsa87VerifyDigestLength        = WordBytes
 	mldsa87VerifyDigestOffset        = 0
-	mldsa87VerifyPublicKeyOffset     = mldsa87VerifyDigestOffset + common.HashLength
+	mldsa87VerifyPublicKeyOffset     = mldsa87VerifyDigestOffset + mldsa87VerifyDigestLength
 	mldsa87VerifySignatureOffset     = mldsa87VerifyPublicKeyOffset + cryptomldsa87.CRYPTO_PUBLIC_KEY_BYTES
 	mldsa87VerifyContextLengthOffset = mldsa87VerifySignatureOffset + cryptomldsa87.CRYPTO_BYTES
 	mldsa87VerifyContextOffset       = mldsa87VerifyContextLengthOffset + 1
@@ -140,8 +147,8 @@ const (
 	mldsa87VerifyMaxContextLength    = 255
 )
 
-// mldsa87Verify verifies an ML-DSA-87 signature over a fixed-size digest using
-// the supplied public key and context.
+// mldsa87Verify verifies an ML-DSA-87 signature over a fixed 64-byte message
+// representative using the supplied public key and context.
 type mldsa87Verify struct{}
 
 func (*mldsa87Verify) RequiredGas([]byte) uint64 {
@@ -232,6 +239,26 @@ func (c *sha256hash) RequiredGas(input []byte) uint64 {
 func (c *sha256hash) Run(input []byte) ([]byte, error) {
 	h := sha256.Sum256(input)
 	return h[:], nil
+}
+
+// shake256hash implements SHAKE256 with a fixed 512-bit output.
+type shake256hash struct{}
+
+// RequiredGas returns the gas required to execute the precompiled contract.
+func (*shake256hash) RequiredGas(input []byte) uint64 {
+	return shake256Gas(uint64(len(input)))
+}
+
+func shake256Gas(inputLength uint64) uint64 {
+	words := toWordSize(inputLength)
+	if words > (gomath.MaxUint64-params.Shake256BaseGas)/params.Shake256PerWordGas {
+		return gomath.MaxUint64
+	}
+	return words*params.Shake256PerWordGas + params.Shake256BaseGas
+}
+
+func (*shake256hash) Run(input []byte) ([]byte, error) {
+	return sha3.SumSHAKE256(input, 64), nil
 }
 
 // data copy implemented as a native contract.

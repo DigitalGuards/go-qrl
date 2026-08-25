@@ -18,6 +18,7 @@ package vm
 
 import (
 	"bytes"
+	"crypto/sha3"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -26,7 +27,6 @@ import (
 	"time"
 
 	"github.com/theQRL/go-qrl/common"
-	"github.com/theQRL/go-qrl/crypto"
 	"github.com/theQRL/go-qrl/params"
 	cryptomldsa87 "github.com/theQRL/go-qrllib/crypto/ml_dsa_87"
 )
@@ -365,7 +365,7 @@ func newRawMLDSA87VerifyInput(tb testing.TB, context []byte) []byte {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	digest := crypto.Keccak256([]byte("QRL raw ML-DSA-87 precompile test"))
+	digest := sha3.SumSHAKE256([]byte("QRL raw ML-DSA-87 precompile test"), mldsa87VerifyDigestLength)
 	signature, err := signer.Sign(context, digest)
 	if err != nil {
 		tb.Fatal(err)
