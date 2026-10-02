@@ -139,3 +139,38 @@ func TestSimulatedBeaconSendWithdrawals(t *testing.T) {
 		}
 	}
 }
+
+// The dev-mode sealing loop must keep producing blocks across the activation.
+func TestSimulatedBeaconSealsAcrossBeaconRootActivation(t *testing.T) {
+	activation := uint64(time.Now().Unix()) + 3
+	config := *params.AllDevChainProtocolChanges
+	config.QRLBeaconRootsTime = &activation
+	genesis := &core.Genesis{Config: &config, GasLimit: 30_000_000, Alloc: core.GenesisAlloc{}}
+	node, service, _ := startSimulatedBeaconQRLService(t, genesis)
+	defer node.Close()
+
+	chain := service.BlockChain()
+	deadline := time.Now().Add(20 * time.Second)
+	for chain.CurrentBlock().Time <= activation {
+		if time.Now().After(deadline) {
+			t.Fatalf("sealing stopped at block %d, time %d, activation %d", chain.CurrentBlock().Number.Uint64(), chain.CurrentBlock().Time, activation)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	var before, after int
+	for number := uint64(1); number <= chain.CurrentBlock().Number.Uint64(); number++ {
+		header := chain.GetHeaderByNumber(number)
+		active := header.Time >= activation
+		if (header.ParentBeaconRoot != nil) != active || (active && *header.ParentBeaconRoot != (common.Hash{})) {
+			t.Fatalf("block %d at %d: parent beacon root %v", number, header.Time, header.ParentBeaconRoot)
+		}
+		if active {
+			after++
+		} else {
+			before++
+		}
+	}
+	if before == 0 || after == 0 {
+		t.Fatalf("blocks before activation %d, after %d", before, after)
+	}
+}

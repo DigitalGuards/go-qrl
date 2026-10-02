@@ -154,14 +154,29 @@ func (c *SimulatedBeacon) sealBlock(withdrawals []*types.Withdrawal, timestamp u
 		c.setCurrentState(header.Hash(), *finalizedHash)
 	}
 
+	// Without a consensus client there is no beacon parent, so blocks commit
+	// to a zero root once the experimental fork is active, as go-ethereum's
+	// simulated beacon does for EIP-4788.
+	var beaconRoot *common.Hash
+	if c.qrl.BlockChain().Config().IsQRLBeaconRoots(timestamp) {
+		beaconRoot = new(common.Hash)
+	}
 	var random [32]byte
 	rand.Read(random[:])
-	fcResponse, err := c.engineAPI.ForkchoiceUpdatedV2(c.curForkchoiceState, &engine.PayloadAttributes{
+	attributes := &engine.PayloadAttributes{
 		Timestamp:             timestamp,
 		SuggestedFeeRecipient: feeRecipient,
 		Withdrawals:           withdrawals,
 		Random:                random,
-	})
+		ParentBeaconBlockRoot: beaconRoot,
+	}
+	var fcResponse engine.ForkChoiceResponse
+	var err error
+	if beaconRoot != nil {
+		fcResponse, err = c.engineAPI.ForkchoiceUpdatedWithBeaconRootV1(c.curForkchoiceState, attributes)
+	} else {
+		fcResponse, err = c.engineAPI.ForkchoiceUpdatedV2(c.curForkchoiceState, attributes)
+	}
 	if err != nil {
 		return err
 	}
@@ -186,7 +201,12 @@ func (c *SimulatedBeacon) sealBlock(withdrawals []*types.Withdrawal, timestamp u
 	}
 
 	// Mark the payload as canon
-	if _, err = c.engineAPI.NewPayloadV2(*payload); err != nil {
+	if beaconRoot != nil {
+		_, err = c.engineAPI.NewPayloadWithBeaconRootV1(*payload, beaconRoot)
+	} else {
+		_, err = c.engineAPI.NewPayloadV2(*payload)
+	}
+	if err != nil {
 		return err
 	}
 	c.setCurrentState(payload.BlockHash, finalizedHash)
