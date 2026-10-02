@@ -1,6 +1,9 @@
 // Package stakingrequests contains unregistered experimental primitives for
-// withdrawal-recipient authorized exits. Constants and encodings are candidates
-// for review; no fork, Engine API, or block transition activates this package.
+// withdrawal-recipient authorized exits. The queue follows EIP-7002
+// (https://eips.ethereum.org/EIPS/eip-7002) and the request commitment follows
+// EIP-7685 (https://eips.ethereum.org/EIPS/eip-7685). Constants and encodings
+// are candidates for review; no fork, Engine API, or block transition
+// activates this package.
 package stakingrequests
 
 import (

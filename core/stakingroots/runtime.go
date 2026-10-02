@@ -1,5 +1,8 @@
 // Package stakingroots implements an experimental native beacon-root history.
-// It has no chain registration, activation rule, or assigned protocol addresses.
+// It ports the EIP-4788 beacon roots contract
+// (https://eips.ethereum.org/EIPS/eip-4788) to native QRVM code with 64-byte
+// words and addresses. It has no chain registration, activation rule, or
+// assigned protocol addresses.
 package stakingroots
 
 import (
@@ -12,6 +15,7 @@ import (
 )
 
 // ExperimentalHistoryLength is a research fixture, pending protocol selection.
+// It reuses EIP-4788's HISTORY_BUFFER_LENGTH.
 const ExperimentalHistoryLength uint64 = 8191
 
 // Runtime builds native QRVM code for a timestamp/root ring. Reads take exactly

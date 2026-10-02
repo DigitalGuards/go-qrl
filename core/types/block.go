@@ -50,7 +50,7 @@ type Header struct {
 	Random           common.Hash    `json:"prevRandao"`
 	BaseFee          *big.Int       `json:"baseFeePerGas" rlp:"optional"`
 	WithdrawalsHash  *common.Hash   `json:"withdrawalsRoot" rlp:"optional"`
-	ParentBeaconRoot *common.Hash   `json:"parentBeaconBlockRoot,omitempty" rlp:"optional"`
+	ParentBeaconRoot *common.Hash   `json:"parentBeaconBlockRoot,omitempty" rlp:"optional"` // EIP-4788, set once the experimental fork is active
 }
 
 // field type overrides for gencodec

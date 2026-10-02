@@ -1,5 +1,7 @@
 # Experimental recipient-authorized exit queue
 
+Prior art: [EIP-7002](https://eips.ethereum.org/EIPS/eip-7002) (execution layer triggerable withdrawals) for the queue and [EIP-7685](https://eips.ethereum.org/EIPS/eip-7685) (general purpose execution layer requests) for the request commitment. QRL-specific choices: a validator index plus the SSZ root of its ML-DSA-87 public key identifies the validator, only full exits are covered, and the flat fee and small bounds replace EIP-7002's exponential fee market.
+
 This package implements a native QRVM admission/drain queue and a candidate execution-request codec. It has no canonical block-path caller, protocol address or activated request type.
 
 Ordinary calls pay a fee and submit exactly 40 bytes: uint64 validator index in big endian, followed by a 32-byte SSZ public-key root. The runtime records the full 64-byte immediate caller. Only the configured system caller can drain, with empty input and zero value. Output records contain source64, index8 in little endian and key-root32.

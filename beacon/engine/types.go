@@ -36,7 +36,7 @@ type PayloadAttributes struct {
 	Random                common.Hash         `json:"prevRandao"            gencodec:"required"`
 	SuggestedFeeRecipient common.Address      `json:"suggestedFeeRecipient" gencodec:"required"`
 	Withdrawals           []*types.Withdrawal `json:"withdrawals"`
-	ParentBeaconBlockRoot *common.Hash        `json:"parentBeaconBlockRoot,omitempty"`
+	ParentBeaconBlockRoot *common.Hash        `json:"parentBeaconBlockRoot,omitempty"` // EIP-4788, experimental Engine methods only
 }
 
 // JSON type overrides for PayloadAttributes.

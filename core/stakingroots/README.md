@@ -1,5 +1,7 @@
 # Experimental beacon-root history
 
+Prior art: [EIP-4788](https://eips.ethereum.org/EIPS/eip-4788) (beacon block root in the EVM). This package ports its timestamp/root ring contract, system address and 8191-entry buffer to native QRVM code with 64-byte words and addresses.
+
 This package implements a native QRVM history runtime and an isolated system-call helper. It has no chain registration, fork activation, assigned system address or Engine API integration.
 
 `Runtime` assembles code using this client's opcode constants. Ordinary calls accept one exact 64-byte big-endian timestamp, limited to a nonzero uint64, and return 32 raw root bytes. The configured 64-byte system caller writes a 32-byte root using the execution block timestamp. Ring reads verify the stored timestamp before returning a root.

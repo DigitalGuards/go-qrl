@@ -12,6 +12,10 @@ import (
 )
 
 // ProcessBeaconRoot applies the experimental pre-transaction block operation.
+// It corresponds to go-ethereum's ProcessBeaconBlockRoot for EIP-4788
+// (https://eips.ethereum.org/EIPS/eip-4788) with two deliberate differences:
+// the client installs the runtime at the fork boundary, and a failed system
+// call invalidates the block.
 // Every caller must supply parent state, including empty blocks and transaction
 // replay. Calling this on an already processed block state is invalid usage.
 func ProcessBeaconRoot(config *params.ChainConfig, chain ChainContext, header *types.Header, db *state.StateDB) error {
