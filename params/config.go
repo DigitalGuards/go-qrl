@@ -87,6 +87,13 @@ type ChainConfig struct {
 	ChainID *big.Int `json:"chainId"` // chainId identifies the current chain and is used for replay protection
 
 	IsDevMode bool `json:"isDev,omitempty"`
+	// QRLBeaconRootsTime enables the experimental native root history fork.
+	// Nil preserves the current protocol. No public network enables it by default.
+	QRLBeaconRootsTime *uint64 `json:"qrlBeaconRootsTime,omitempty"`
+}
+
+func (c *ChainConfig) IsQRLBeaconRoots(timestamp uint64) bool {
+	return c != nil && c.QRLBeaconRootsTime != nil && timestamp >= *c.QRLBeaconRootsTime
 }
 
 // Description returns a human-readable description of ChainConfig.
@@ -108,6 +115,18 @@ func (c *ChainConfig) Description() string {
 // CheckCompatible checks whether scheduled fork transitions have been imported
 // with a mismatching chain configuration.
 func (c *ChainConfig) CheckCompatible(newcfg *ChainConfig, height uint64, time uint64) *ConfigCompatError {
+	if (c.IsQRLBeaconRoots(time) || newcfg.IsQRLBeaconRoots(time)) &&
+		!equalTimestamp(c.QRLBeaconRootsTime, newcfg.QRLBeaconRootsTime) {
+		err := &ConfigCompatError{What: "experimental beacon roots", StoredTime: c.QRLBeaconRootsTime, NewTime: newcfg.QRLBeaconRootsTime}
+		first := c.QRLBeaconRootsTime
+		if first == nil || (newcfg.QRLBeaconRootsTime != nil && *newcfg.QRLBeaconRootsTime < *first) {
+			first = newcfg.QRLBeaconRootsTime
+		}
+		if first != nil && *first > 0 {
+			err.RewindToTime = *first - 1
+		}
+		return err
+	}
 	var (
 		bhead = new(big.Int).SetUint64(height)
 		// btime = time
@@ -128,6 +147,10 @@ func (c *ChainConfig) CheckCompatible(newcfg *ChainConfig, height uint64, time u
 		}
 	}
 	return lasterr
+}
+
+func equalTimestamp(a, b *uint64) bool {
+	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
 }
 
 // CheckConfigForkOrder checks that we don't "skip" any forks, gqrl isn't pluggable enough

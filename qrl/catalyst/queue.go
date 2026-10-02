@@ -91,6 +91,23 @@ func (q *payloadQueue) get(id engine.PayloadID, full bool) *engine.ExecutionPayl
 	return nil
 }
 
+// timestamp returns the block timestamp of a tracked payload without
+// resolving it, so callers can validate a request before stopping the builder.
+func (q *payloadQueue) timestamp(id engine.PayloadID) (uint64, bool) {
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+
+	for _, item := range q.payloads {
+		if item == nil {
+			return 0, false
+		}
+		if item.id == id {
+			return item.payload.Timestamp(), true
+		}
+	}
+	return 0, false
+}
+
 // has checks if a particular payload is already tracked.
 func (q *payloadQueue) has(id engine.PayloadID) bool {
 	q.lock.RLock()

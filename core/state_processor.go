@@ -71,6 +71,9 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		signer  = types.MakeSigner(p.config)
 	)
 
+	if err := ProcessBeaconRoot(p.config, p.bc, header, statedb); err != nil {
+		return nil, nil, 0, err
+	}
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
 		msg, err := TransactionToMessage(tx, signer, header.BaseFee)

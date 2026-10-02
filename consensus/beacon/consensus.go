@@ -137,6 +137,9 @@ func (beacon *Beacon) verifyHeader(chain consensus.ChainHeaderReader, header, pa
 	if header.WithdrawalsHash == nil {
 		return errors.New("missing withdrawalsHash")
 	}
+	if chain.Config().IsQRLBeaconRoots(header.Time) != (header.ParentBeaconRoot != nil) {
+		return errors.New("parent beacon root presence disagrees with experimental fork")
+	}
 
 	if beacon.fakeDelay != nil {
 		time.Sleep(*beacon.fakeDelay)

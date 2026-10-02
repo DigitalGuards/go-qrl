@@ -36,20 +36,21 @@ import (
 
 // Header represents a block header in the QRL blockchain.
 type Header struct {
-	ParentHash      common.Hash    `json:"parentHash"       gencodec:"required"`
-	Coinbase        common.Address `json:"miner"`
-	Root            common.Hash    `json:"stateRoot"        gencodec:"required"`
-	TxHash          common.Hash    `json:"transactionsRoot" gencodec:"required"`
-	ReceiptHash     common.Hash    `json:"receiptsRoot"     gencodec:"required"`
-	Bloom           Bloom          `json:"logsBloom"        gencodec:"required"`
-	Number          *big.Int       `json:"number"           gencodec:"required"`
-	GasLimit        uint64         `json:"gasLimit"         gencodec:"required"`
-	GasUsed         uint64         `json:"gasUsed"          gencodec:"required"`
-	Time            uint64         `json:"timestamp"        gencodec:"required"`
-	Extra           []byte         `json:"extraData"        gencodec:"required"`
-	Random          common.Hash    `json:"prevRandao"`
-	BaseFee         *big.Int       `json:"baseFeePerGas"`
-	WithdrawalsHash *common.Hash   `json:"withdrawalsRoot"`
+	ParentHash       common.Hash    `json:"parentHash"       gencodec:"required"`
+	Coinbase         common.Address `json:"miner"`
+	Root             common.Hash    `json:"stateRoot"        gencodec:"required"`
+	TxHash           common.Hash    `json:"transactionsRoot" gencodec:"required"`
+	ReceiptHash      common.Hash    `json:"receiptsRoot"     gencodec:"required"`
+	Bloom            Bloom          `json:"logsBloom"        gencodec:"required"`
+	Number           *big.Int       `json:"number"           gencodec:"required"`
+	GasLimit         uint64         `json:"gasLimit"         gencodec:"required"`
+	GasUsed          uint64         `json:"gasUsed"          gencodec:"required"`
+	Time             uint64         `json:"timestamp"        gencodec:"required"`
+	Extra            []byte         `json:"extraData"        gencodec:"required"`
+	Random           common.Hash    `json:"prevRandao"`
+	BaseFee          *big.Int       `json:"baseFeePerGas" rlp:"optional"`
+	WithdrawalsHash  *common.Hash   `json:"withdrawalsRoot" rlp:"optional"`
+	ParentBeaconRoot *common.Hash   `json:"parentBeaconBlockRoot,omitempty" rlp:"optional"` // EIP-4788, set once the experimental fork is active
 }
 
 // field type overrides for gencodec
@@ -222,7 +223,20 @@ func CopyHeader(h *Header) *Header {
 		cpy.WithdrawalsHash = new(common.Hash)
 		*cpy.WithdrawalsHash = *h.WithdrawalsHash
 	}
+	if h.ParentBeaconRoot != nil {
+		cpy.ParentBeaconRoot = new(common.Hash)
+		*cpy.ParentBeaconRoot = *h.ParentBeaconRoot
+	}
 	return &cpy
+}
+
+// BeaconRoot returns an independent copy of the experimental parent root.
+func (b *Block) BeaconRoot() *common.Hash {
+	if b.header.ParentBeaconRoot == nil {
+		return nil
+	}
+	root := *b.header.ParentBeaconRoot
+	return &root
 }
 
 // DecodeRLP decodes a block from RLP.

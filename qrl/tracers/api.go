@@ -373,10 +373,16 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 			// may fail if we release too early.
 			tracker.callReleases()
 
+			traceState := statedb.Copy()
+			if err := core.ProcessBeaconRoot(api.backend.ChainConfig(), api.chainContext(ctx), next.Header(), traceState); err != nil {
+				tracker.releaseState(number, release)
+				failed = err
+				break
+			}
 			// Send the block over to the concurrent tracers (if not in the fast-forward phase)
 			txs := next.Transactions()
 			select {
-			case taskCh <- &blockTraceTask{statedb: statedb.Copy(), block: next, release: release, results: make([]*txTraceResult, len(txs))}:
+			case taskCh <- &blockTraceTask{statedb: traceState, block: next, release: release, results: make([]*txTraceResult, len(txs))}:
 			case <-closed:
 				tracker.releaseState(number, release)
 				return
@@ -508,6 +514,9 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 		return nil, err
 	}
 	defer release()
+	if err := core.ProcessBeaconRoot(api.backend.ChainConfig(), api.chainContext(ctx), block.Header(), statedb); err != nil {
+		return nil, err
+	}
 
 	var (
 		roots              []common.Hash
@@ -575,6 +584,9 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 		return nil, err
 	}
 	defer release()
+	if err := core.ProcessBeaconRoot(api.backend.ChainConfig(), api.chainContext(ctx), block.Header(), statedb); err != nil {
+		return nil, err
+	}
 
 	// JS tracers have high overhead. In this case run a parallel
 	// process that generates states in one thread and traces txes
@@ -711,6 +723,9 @@ func (api *API) standardTraceBlockToFile(ctx context.Context, block *types.Block
 		return nil, err
 	}
 	defer release()
+	if err := core.ProcessBeaconRoot(api.backend.ChainConfig(), api.chainContext(ctx), block.Header(), statedb); err != nil {
+		return nil, err
+	}
 
 	// Retrieve the tracing configurations, or use default values
 	var (

@@ -147,6 +147,7 @@ func (miner *Miner) getPending() *newPayloadResult {
 		random:      common.Hash{},
 		withdrawals: []*types.Withdrawal{},
 		noTxs:       false,
+		pending:     true,
 	})
 	if ret.err != nil {
 		return nil
