@@ -140,6 +140,9 @@ func (beacon *Beacon) verifyHeader(chain consensus.ChainHeaderReader, header, pa
 	if chain.Config().IsQRLBeaconRoots(header.Time) != (header.ParentBeaconRoot != nil) {
 		return errors.New("parent beacon root presence disagrees with experimental fork")
 	}
+	if chain.Config().IsQRLExitRequests(header.Time) != (header.RequestsHash != nil) {
+		return errors.New("requests hash presence disagrees with experimental exit fork")
+	}
 
 	if beacon.fakeDelay != nil {
 		time.Sleep(*beacon.fakeDelay)

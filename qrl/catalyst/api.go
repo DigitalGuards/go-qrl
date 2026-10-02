@@ -27,6 +27,7 @@ import (
 	"github.com/theQRL/go-qrl/common"
 	"github.com/theQRL/go-qrl/common/hexutil"
 	"github.com/theQRL/go-qrl/core/rawdb"
+	"github.com/theQRL/go-qrl/core/stakingrequests"
 	"github.com/theQRL/go-qrl/core/types"
 	"github.com/theQRL/go-qrl/log"
 	"github.com/theQRL/go-qrl/miner"
@@ -374,20 +375,44 @@ func (api *ConsensusAPI) NewPayloadV2(params engine.ExecutableData) (engine.Payl
 		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(errors.New("nil withdrawals post-zond"))
 	}
 
-	return api.newPayload(params, nil)
+	return api.newPayload(params, nil, nil)
 }
 
-func (api *ConsensusAPI) NewPayloadWithBeaconRootV1(params engine.ExecutableData, parentBeaconBlockRoot *common.Hash) (engine.PayloadStatusV1, error) {
+// NewPayloadWithBeaconRootV1 imports a root-bound payload. Once the demo
+// exit-requests fork is active it also takes the EIP-7685 request groups from
+// the enclosing beacon block; block import checks that execution drained
+// exactly these requests.
+func (api *ConsensusAPI) NewPayloadWithBeaconRootV1(params engine.ExecutableData, parentBeaconBlockRoot *common.Hash, executionRequests *[]hexutil.Bytes) (engine.PayloadStatusV1, error) {
 	if parentBeaconBlockRoot == nil || params.Withdrawals == nil {
 		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(errors.New("experimental payload requires parent beacon root and withdrawals"))
 	}
 	if !api.qrl.BlockChain().Config().IsQRLBeaconRoots(params.Timestamp) {
 		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.UnsupportedFork
 	}
-	return api.newPayload(params, parentBeaconBlockRoot)
+	var requestsHash *common.Hash
+	if api.qrl.BlockChain().Config().IsQRLExitRequests(params.Timestamp) {
+		if executionRequests == nil {
+			return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(errors.New("exit-requests payload requires execution requests"))
+		}
+		groups := make([][]byte, len(*executionRequests))
+		for i, group := range *executionRequests {
+			groups[i] = group
+		}
+		if _, err := stakingrequests.ValidateGroups(groups, stakingrequests.MaxPerBlock); err != nil {
+			return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(err)
+		}
+		hash, err := stakingrequests.HashGroups(groups)
+		if err != nil {
+			return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(err)
+		}
+		requestsHash = &hash
+	} else if executionRequests != nil {
+		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.UnsupportedFork.With(errors.New("execution requests before the exit-requests fork"))
+	}
+	return api.newPayload(params, parentBeaconBlockRoot, requestsHash)
 }
 
-func (api *ConsensusAPI) newPayload(params engine.ExecutableData, parentBeaconRoot *common.Hash) (engine.PayloadStatusV1, error) {
+func (api *ConsensusAPI) newPayload(params engine.ExecutableData, parentBeaconRoot *common.Hash, requestsHash *common.Hash) (engine.PayloadStatusV1, error) {
 	// The locking here is, strictly, not required. Without these locks, this can happen:
 	//
 	// 1. NewPayload( execdata-N ) is invoked from the CL. It goes all the way down to
@@ -405,7 +430,7 @@ func (api *ConsensusAPI) newPayload(params engine.ExecutableData, parentBeaconRo
 	defer api.newPayloadLock.Unlock()
 
 	log.Trace("Engine API request received", "method", "NewPayload", "number", params.Number, "hash", params.BlockHash)
-	block, err := engine.ExecutableDataToBlockWithBeaconRoot(params, parentBeaconRoot)
+	block, err := engine.ExecutableDataToBlockWithRequests(params, parentBeaconRoot, requestsHash)
 	if err != nil {
 		log.Warn("Invalid NewPayload params",
 			"params.Number", params.Number,

@@ -246,6 +246,12 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 			gen(i, b)
 		}
 		if b.engine != nil {
+			// Drain the demo exit queue after transactions, as block import does.
+			_, requestsHash, err := ProcessExitRequests(config, generated, b.header, statedb)
+			if err != nil {
+				panic(err)
+			}
+			b.header.RequestsHash = requestsHash
 			body := types.Body{Transactions: b.txs, Withdrawals: b.withdrawals}
 			block, err := b.engine.FinalizeAndAssemble(chainreader, b.header, statedb, &body, b.receipts)
 			if err != nil {

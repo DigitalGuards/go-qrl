@@ -80,9 +80,10 @@ type executableDataMarshaling struct {
 //go:generate go run github.com/fjl/gencodec -type ExecutionPayloadEnvelope -field-override executionPayloadEnvelopeMarshaling -out gen_epe.go
 
 type ExecutionPayloadEnvelope struct {
-	ExecutionPayload *ExecutableData `json:"executionPayload"  gencodec:"required"`
-	BlockValue       *big.Int        `json:"blockValue"  gencodec:"required"`
-	Override         bool            `json:"shouldOverrideBuilder"`
+	ExecutionPayload  *ExecutableData `json:"executionPayload"  gencodec:"required"`
+	BlockValue        *big.Int        `json:"blockValue"  gencodec:"required"`
+	Override          bool            `json:"shouldOverrideBuilder"`
+	ExecutionRequests []hexutil.Bytes `json:"executionRequests,omitempty"` // Demo EIP-7685 request groups
 }
 
 // JSON type overrides for ExecutionPayloadEnvelope.
@@ -161,7 +162,14 @@ func ExecutableDataToBlock(data ExecutableData) (*types.Block, error) {
 // ExecutableDataToBlockWithBeaconRoot reconstructs and checks an experimental
 // payload using the root supplied separately by its enclosing beacon block.
 func ExecutableDataToBlockWithBeaconRoot(data ExecutableData, root *common.Hash) (*types.Block, error) {
-	block, err := executableDataToBlockNoHash(data, root)
+	return ExecutableDataToBlockWithRequests(data, root, nil)
+}
+
+// ExecutableDataToBlockWithRequests also commits the demo exit request groups
+// supplied by the consensus client. A nil hash marks a pre-fork payload.
+// Block import later checks that execution drained exactly these requests.
+func ExecutableDataToBlockWithRequests(data ExecutableData, root *common.Hash, requestsHash *common.Hash) (*types.Block, error) {
+	block, err := executableDataToBlockNoHash(data, root, requestsHash)
 	if err != nil {
 		return nil, err
 	}
@@ -175,10 +183,10 @@ func ExecutableDataToBlockWithBeaconRoot(data ExecutableData, root *common.Hash)
 // for stateless execution, so it skips checking if the executable data hashes to
 // the requested hash (stateless has to *compute* the root hash, it's not given).
 func ExecutableDataToBlockNoHash(data ExecutableData) (*types.Block, error) {
-	return executableDataToBlockNoHash(data, nil)
+	return executableDataToBlockNoHash(data, nil, nil)
 }
 
-func executableDataToBlockNoHash(data ExecutableData, root *common.Hash) (*types.Block, error) {
+func executableDataToBlockNoHash(data ExecutableData, root *common.Hash, requestsHash *common.Hash) (*types.Block, error) {
 	txs, err := decodeTransactions(data.Transactions)
 	if err != nil {
 		return nil, err
@@ -217,6 +225,7 @@ func executableDataToBlockNoHash(data ExecutableData, root *common.Hash) (*types
 		Random:           data.Random,
 		WithdrawalsHash:  withdrawalsRoot,
 		ParentBeaconRoot: root,
+		RequestsHash:     requestsHash,
 	}
 	return types.NewBlockWithHeader(header).
 			WithBody(types.Body{Transactions: txs, Withdrawals: data.Withdrawals}),

@@ -68,6 +68,7 @@ type newPayloadResult struct {
 	fees     *big.Int         // total block fees
 	stateDB  *state.StateDB   // StateDB after executing the transactions
 	receipts []*types.Receipt // Receipts collected during construction
+	requests [][]byte         // Demo exit request groups drained by the block
 }
 
 // generateParams wraps various settings for generating sealing task.
@@ -103,6 +104,11 @@ func (miner *Miner) generateWork(params *generateParams) *newPayloadResult {
 			log.Warn("Block building is interrupted", "allowance", common.PrettyDuration(miner.config.Recommit))
 		}
 	}
+	requests, requestsHash, err := core.ProcessExitRequests(miner.chainConfig, miner.chain, work.header, work.state)
+	if err != nil {
+		return &newPayloadResult{err: err}
+	}
+	work.header.RequestsHash = requestsHash
 	body := types.Body{Transactions: work.txs, Withdrawals: params.withdrawals}
 	block, err := miner.engine.FinalizeAndAssemble(miner.chain, work.header, work.state, &body, work.receipts)
 	if err != nil {
@@ -113,6 +119,7 @@ func (miner *Miner) generateWork(params *generateParams) *newPayloadResult {
 		fees:     totalFees(block, work.receipts),
 		stateDB:  work.state,
 		receipts: work.receipts,
+		requests: requests,
 	}
 }
 

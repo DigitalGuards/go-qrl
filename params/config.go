@@ -17,6 +17,7 @@
 package params
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 
@@ -90,10 +91,21 @@ type ChainConfig struct {
 	// QRLBeaconRootsTime enables the experimental native root history fork.
 	// Nil preserves the current protocol. No public network enables it by default.
 	QRLBeaconRootsTime *uint64 `json:"qrlBeaconRootsTime,omitempty"`
+	// QRLExitRequestsTime enables the demo execution-triggered exit transport
+	// (EIP-7002 queue drained per block, EIP-7685 requests hash in the header).
+	// It requires the beacon-roots fork, because the header's optional RLP
+	// fields are positional.
+	QRLExitRequestsTime *uint64 `json:"qrlExitRequestsTime,omitempty"`
 }
 
 func (c *ChainConfig) IsQRLBeaconRoots(timestamp uint64) bool {
 	return c != nil && c.QRLBeaconRootsTime != nil && timestamp >= *c.QRLBeaconRootsTime
+}
+
+// IsQRLExitRequests reports whether blocks at timestamp drain the exit queue
+// and commit to its requests.
+func (c *ChainConfig) IsQRLExitRequests(timestamp uint64) bool {
+	return c.IsQRLBeaconRoots(timestamp) && c.QRLExitRequestsTime != nil && timestamp >= *c.QRLExitRequestsTime
 }
 
 // Description returns a human-readable description of ChainConfig.
@@ -121,6 +133,18 @@ func (c *ChainConfig) CheckCompatible(newcfg *ChainConfig, height uint64, time u
 		first := c.QRLBeaconRootsTime
 		if first == nil || (newcfg.QRLBeaconRootsTime != nil && *newcfg.QRLBeaconRootsTime < *first) {
 			first = newcfg.QRLBeaconRootsTime
+		}
+		if first != nil && *first > 0 {
+			err.RewindToTime = *first - 1
+		}
+		return err
+	}
+	if (c.IsQRLExitRequests(time) || newcfg.IsQRLExitRequests(time)) &&
+		!equalTimestamp(c.QRLExitRequestsTime, newcfg.QRLExitRequestsTime) {
+		err := &ConfigCompatError{What: "experimental exit requests", StoredTime: c.QRLExitRequestsTime, NewTime: newcfg.QRLExitRequestsTime}
+		first := c.QRLExitRequestsTime
+		if first == nil || (newcfg.QRLExitRequestsTime != nil && *newcfg.QRLExitRequestsTime < *first) {
+			first = newcfg.QRLExitRequestsTime
 		}
 		if first != nil && *first > 0 {
 			err.RewindToTime = *first - 1
@@ -156,6 +180,9 @@ func equalTimestamp(a, b *uint64) bool {
 // CheckConfigForkOrder checks that we don't "skip" any forks, gqrl isn't pluggable enough
 // to guarantee that forks can be implemented in a different order than on official networks
 func (c *ChainConfig) CheckConfigForkOrder() error {
+	if c.QRLExitRequestsTime != nil && (c.QRLBeaconRootsTime == nil || *c.QRLExitRequestsTime < *c.QRLBeaconRootsTime) {
+		return errors.New("unsupported fork ordering: experimental exit requests require the beacon-roots fork first")
+	}
 	type fork struct {
 		name      string
 		block     *big.Int // forks up to - and including the merge - were defined with block numbers

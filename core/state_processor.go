@@ -89,6 +89,15 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		allLogs = append(allLogs, receipt.Logs...)
 	}
 
+	// Drain the demo exit queue and check the header's requests commitment.
+	_, requestsHash, err := ProcessExitRequests(p.config, p.bc, header, statedb)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if (requestsHash == nil) != (header.RequestsHash == nil) || (requestsHash != nil && *requestsHash != *header.RequestsHash) {
+		return nil, nil, 0, fmt.Errorf("exit requests hash mismatch: header %v, executed %v", header.RequestsHash, requestsHash)
+	}
+
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 	p.engine.Finalize(p.bc, header, statedb, block.Body())
 

@@ -15,7 +15,6 @@ import (
 	"github.com/theQRL/go-qrl/core/state"
 	"github.com/theQRL/go-qrl/core/types"
 	"github.com/theQRL/go-qrl/core/vm"
-	"github.com/theQRL/go-qrl/core/vm/runtime"
 	"github.com/theQRL/go-qrl/params"
 )
 
@@ -47,11 +46,24 @@ func newQueue(t *testing.T) *queueFixture {
 	return f
 }
 
+// call runs one top-level call. It builds the QRVM directly because
+// core/vm/runtime imports core, which imports this package.
 func (f *queueFixture) call(caller, target common.Address, data []byte, value int64, gas uint64) ([]byte, error) {
-	out, _, err := runtime.Call(target, data, &runtime.Config{
-		State: f.db, Origin: caller, ChainConfig: f.chain, BlockNumber: big.NewInt(1),
-		Time: 60, Value: big.NewInt(value), GasLimit: gas,
-	})
+	block := vm.BlockContext{
+		BlockNumber: big.NewInt(1), Time: 60, GasLimit: 30_000_000, BaseFee: new(big.Int), Random: new(common.Hash),
+		CanTransfer: func(s vm.StateDB, from common.Address, amount *big.Int) bool {
+			return s.GetBalance(from).Cmp(amount) >= 0
+		},
+		Transfer: func(s vm.StateDB, from, to common.Address, amount *big.Int) {
+			s.SubBalance(from, amount)
+			s.AddBalance(to, amount)
+		},
+		GetHash: func(uint64) common.Hash { return common.Hash{} },
+	}
+	rules := f.chain.Rules(block.BlockNumber, block.Time)
+	f.db.Prepare(rules, caller, block.Coinbase, &target, vm.ActivePrecompiles(rules), nil)
+	qrvm := vm.NewQRVM(block, vm.TxContext{Origin: caller, GasPrice: new(big.Int)}, f.db, f.chain, vm.Config{})
+	out, _, err := qrvm.Call(vm.AccountRef(caller), target, data, gas, big.NewInt(value))
 	return out, err
 }
 

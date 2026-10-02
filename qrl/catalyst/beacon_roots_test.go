@@ -81,11 +81,11 @@ func TestBeaconRootEngineBuildImportAndReplay(t *testing.T) {
 	if _, err := api.NewPayloadV2(*payload); err == nil {
 		t.Fatal("V2 imported activated payload")
 	}
-	if _, err := api.NewPayloadWithBeaconRootV1(*payload, nil); err == nil {
+	if _, err := api.NewPayloadWithBeaconRootV1(*payload, nil, nil); err == nil {
 		t.Fatal("accepted absent import root")
 	}
 	wrongRoot := common.Hash{5}
-	wrong, err := api.NewPayloadWithBeaconRootV1(*payload, &wrongRoot)
+	wrong, err := api.NewPayloadWithBeaconRootV1(*payload, &wrongRoot, nil)
 	if err != nil || wrong.Status != engine.INVALID {
 		t.Fatalf("wrong parent root: %v %+v", err, wrong)
 	}
@@ -98,11 +98,11 @@ func TestBeaconRootEngineBuildImportAndReplay(t *testing.T) {
 	forgedHeader.ParentBeaconRoot = &wrongRoot
 	forged := *payload
 	forged.BlockHash = forgedHeader.Hash()
-	wrong, err = api.NewPayloadWithBeaconRootV1(forged, &wrongRoot)
+	wrong, err = api.NewPayloadWithBeaconRootV1(forged, &wrongRoot, nil)
 	if err != nil || wrong.Status != engine.INVALID {
 		t.Fatalf("forged root and matching hash: %v %+v", err, wrong)
 	}
-	status, err := api.NewPayloadWithBeaconRootV1(*payload, &root)
+	status, err := api.NewPayloadWithBeaconRootV1(*payload, &root, nil)
 	if err != nil || status.Status != engine.VALID {
 		t.Fatalf("import: %v %+v", err, status)
 	}
@@ -143,7 +143,7 @@ func TestBeaconRootEngineBuildImportAndReplay(t *testing.T) {
 	if len(envelope.ExecutionPayload.Transactions) != 1 {
 		t.Fatal("reader transaction missing from built payload")
 	}
-	status, err = api.NewPayloadWithBeaconRootV1(*envelope.ExecutionPayload, &root)
+	status, err = api.NewPayloadWithBeaconRootV1(*envelope.ExecutionPayload, &root, nil)
 	if err != nil || status.Status != engine.VALID {
 		t.Fatalf("reader import: %v %+v", err, status)
 	}
@@ -210,7 +210,7 @@ func TestBeaconRootEngineForkBoundaryAndCache(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		status, err := api.NewPayloadWithBeaconRootV1(*envelope.ExecutionPayload, &item.root)
+		status, err := api.NewPayloadWithBeaconRootV1(*envelope.ExecutionPayload, &item.root, nil)
 		if err != nil || status.Status != engine.VALID {
 			t.Fatalf("activation import: %v %+v", err, status)
 		}
@@ -242,7 +242,7 @@ func TestBeaconRootPendingViewRemainsAvailable(t *testing.T) {
 	// The simulation's missing root prevents it from being imported as an
 	// activated payload even when a caller supplies a root afterward.
 	payload := engine.BlockToExecutableData(block, new(big.Int)).ExecutionPayload
-	status, err := api.NewPayloadWithBeaconRootV1(*payload, new(common.Hash))
+	status, err := api.NewPayloadWithBeaconRootV1(*payload, new(common.Hash), nil)
 	if err != nil || status.Status != engine.INVALID {
 		t.Fatalf("pending simulation accepted as canonical: %v %+v", err, status)
 	}

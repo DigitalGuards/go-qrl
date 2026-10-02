@@ -26,6 +26,7 @@ import (
 	"github.com/theQRL/go-qrl/beacon/engine"
 	beaconparams "github.com/theQRL/go-qrl/beacon/params"
 	"github.com/theQRL/go-qrl/common"
+	"github.com/theQRL/go-qrl/common/hexutil"
 	"github.com/theQRL/go-qrl/core/types"
 	"github.com/theQRL/go-qrl/log"
 	"github.com/theQRL/go-qrl/params"
@@ -67,21 +68,24 @@ func (args *BuildPayloadArgs) Id() engine.PayloadID {
 // the revenue. Therefore, the empty-block here is always available and full-block
 // will be set/updated afterwards.
 type Payload struct {
-	id       engine.PayloadID
-	empty    *types.Block
-	full     *types.Block
-	fullFees *big.Int
-	stop     chan struct{}
-	lock     sync.Mutex
-	cond     *sync.Cond
+	id            engine.PayloadID
+	empty         *types.Block
+	emptyRequests [][]byte
+	full          *types.Block
+	fullRequests  [][]byte
+	fullFees      *big.Int
+	stop          chan struct{}
+	lock          sync.Mutex
+	cond          *sync.Cond
 }
 
 // newPayload initializes the payload object.
-func newPayload(empty *types.Block, id engine.PayloadID) *Payload {
+func newPayload(empty *types.Block, emptyRequests [][]byte, id engine.PayloadID) *Payload {
 	payload := &Payload{
-		id:    id,
-		empty: empty,
-		stop:  make(chan struct{}),
+		id:            id,
+		empty:         empty,
+		emptyRequests: emptyRequests,
+		stop:          make(chan struct{}),
 	}
 	log.Info("Starting work on payload", "id", payload.id)
 	payload.cond = sync.NewCond(&payload.lock)
@@ -109,6 +113,7 @@ func (payload *Payload) update(r *newPayloadResult, elapsed time.Duration) {
 	// fee(apart from the mev revenue) is the only indicator for comparison.
 	if payload.full == nil || r.fees.Cmp(payload.fullFees) > 0 {
 		payload.full = r.block
+		payload.fullRequests = r.requests
 		payload.fullFees = r.fees
 
 		feesInQuanta := new(big.Float).Quo(new(big.Float).SetInt(r.fees), big.NewFloat(params.Quanta))
@@ -139,9 +144,22 @@ func (payload *Payload) Resolve() *engine.ExecutionPayloadEnvelope {
 		close(payload.stop)
 	}
 	if payload.full != nil {
-		return engine.BlockToExecutableData(payload.full, payload.fullFees)
+		return withRequests(engine.BlockToExecutableData(payload.full, payload.fullFees), payload.fullRequests)
 	}
-	return engine.BlockToExecutableData(payload.empty, big.NewInt(0))
+	return withRequests(engine.BlockToExecutableData(payload.empty, big.NewInt(0)), payload.emptyRequests)
+}
+
+// withRequests attaches the demo exit request groups of an activated block.
+// A block with a requests hash always carries a (possibly empty) list.
+func withRequests(envelope *engine.ExecutionPayloadEnvelope, requests [][]byte) *engine.ExecutionPayloadEnvelope {
+	if envelope.ExecutionPayload == nil {
+		return envelope
+	}
+	envelope.ExecutionRequests = make([]hexutil.Bytes, len(requests))
+	for i, group := range requests {
+		envelope.ExecutionRequests[i] = common.CopyBytes(group)
+	}
+	return envelope
 }
 
 // ResolveEmpty is basically identical to Resolve, but it expects empty block only.
@@ -150,7 +168,7 @@ func (payload *Payload) ResolveEmpty() *engine.ExecutionPayloadEnvelope {
 	payload.lock.Lock()
 	defer payload.lock.Unlock()
 
-	return engine.BlockToExecutableData(payload.empty, big.NewInt(0))
+	return withRequests(engine.BlockToExecutableData(payload.empty, big.NewInt(0)), payload.emptyRequests)
 }
 
 // ResolveFull is basically identical to Resolve, but it expects full block only.
@@ -176,7 +194,7 @@ func (payload *Payload) ResolveFull() *engine.ExecutionPayloadEnvelope {
 	default:
 		close(payload.stop)
 	}
-	return engine.BlockToExecutableData(payload.full, payload.fullFees)
+	return withRequests(engine.BlockToExecutableData(payload.full, payload.fullFees), payload.fullRequests)
 }
 
 // buildPayload builds the payload according to the provided parameters.
@@ -208,7 +226,7 @@ func (miner *Miner) buildPayload(args *BuildPayloadArgs) (*Payload, error) {
 	}
 
 	// Construct a payload object for return.
-	payload := newPayload(empty.block, args.Id())
+	payload := newPayload(empty.block, empty.requests, args.Id())
 
 	// Spin up a routine for updating the payload in background. This strategy
 	// can maximum the revenue for including transactions with highest fee.

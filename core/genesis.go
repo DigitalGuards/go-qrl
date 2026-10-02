@@ -30,6 +30,7 @@ import (
 	"github.com/theQRL/go-qrl/common/hexutil"
 	"github.com/theQRL/go-qrl/common/math"
 	"github.com/theQRL/go-qrl/core/rawdb"
+	"github.com/theQRL/go-qrl/core/stakingrequests"
 	"github.com/theQRL/go-qrl/core/stakingroots"
 	"github.com/theQRL/go-qrl/core/state"
 	"github.com/theQRL/go-qrl/core/types"
@@ -471,6 +472,11 @@ func (g *Genesis) ToBlock() *types.Block {
 		if conf.IsQRLBeaconRoots(g.Timestamp) {
 			head.ParentBeaconRoot = new(common.Hash)
 		}
+		if conf.IsQRLExitRequests(g.Timestamp) {
+			// The genesis block drains nothing: sha256 of no request groups.
+			empty, _ := stakingrequests.HashGroups(nil)
+			head.RequestsHash = &empty
+		}
 	}
 	return types.NewBlock(head, &types.Body{Withdrawals: withdrawals}, nil, trie.NewStackTrie(nil))
 }
@@ -535,6 +541,23 @@ func (g *Genesis) beaconRootAlloc() (GenesisAlloc, error) {
 		alloc[address] = account
 	}
 	alloc[address] = GenesisAccount{Code: code, Nonce: 1, Balance: balance}
+	if g.Config.IsQRLExitRequests(g.Timestamp) {
+		queue := stakingrequests.ExperimentalAddress()
+		queueCode, err := stakingrequests.Runtime(stakingroots.ExperimentalSystemCaller())
+		if err != nil {
+			return nil, err
+		}
+		queueBalance := new(big.Int)
+		if account, exists := g.Alloc[queue]; exists {
+			if len(account.Code) != 0 && !bytes.Equal(account.Code, queueCode) || account.Nonce > 1 || len(account.Storage) != 0 {
+				return nil, errors.New("experimental exit queue genesis allocation collision")
+			}
+			if account.Balance != nil {
+				queueBalance.Set(account.Balance)
+			}
+		}
+		alloc[queue] = GenesisAccount{Code: queueCode, Nonce: 1, Balance: queueBalance}
+	}
 	return alloc, nil
 }
 

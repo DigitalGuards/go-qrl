@@ -55,6 +55,14 @@ func ProcessBeaconRoot(config *params.ChainConfig, chain ChainContext, header *t
 		db.SetNonce(address, 1)
 		db.SetCode(address, code)
 	}
+	// The demo exit queue activates with or after the beacon-root fork, and
+	// genesis activation installs it through the genesis allocation.
+	if config.IsQRLExitRequests(header.Time) && !config.IsQRLExitRequests(parent.Time) {
+		if err := installExitQueue(db); err != nil {
+			db.RevertToSnapshot(snapshot)
+			return err
+		}
+	}
 	err := stakingroots.WriteParentRoot(db, NewQRVMBlockContext(header, chain, nil), config, address, caller, stakingroots.ExperimentalHistoryLength, *header.ParentBeaconRoot)
 	if err != nil {
 		db.RevertToSnapshot(snapshot)

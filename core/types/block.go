@@ -51,6 +51,7 @@ type Header struct {
 	BaseFee          *big.Int       `json:"baseFeePerGas" rlp:"optional"`
 	WithdrawalsHash  *common.Hash   `json:"withdrawalsRoot" rlp:"optional"`
 	ParentBeaconRoot *common.Hash   `json:"parentBeaconBlockRoot,omitempty" rlp:"optional"` // EIP-4788, set once the experimental fork is active
+	RequestsHash     *common.Hash   `json:"requestsHash,omitempty" rlp:"optional"`          // EIP-7685, set once the exit-requests demo fork is active
 }
 
 // field type overrides for gencodec
@@ -227,7 +228,20 @@ func CopyHeader(h *Header) *Header {
 		cpy.ParentBeaconRoot = new(common.Hash)
 		*cpy.ParentBeaconRoot = *h.ParentBeaconRoot
 	}
+	if h.RequestsHash != nil {
+		cpy.RequestsHash = new(common.Hash)
+		*cpy.RequestsHash = *h.RequestsHash
+	}
 	return &cpy
+}
+
+// RequestsHash returns an independent copy of the demo requests commitment.
+func (b *Block) RequestsHash() *common.Hash {
+	if b.header.RequestsHash == nil {
+		return nil
+	}
+	hash := *b.header.RequestsHash
+	return &hash
 }
 
 // BeaconRoot returns an independent copy of the experimental parent root.

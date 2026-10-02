@@ -15,23 +15,26 @@ var _ = (*executionPayloadEnvelopeMarshaling)(nil)
 // MarshalJSON marshals as JSON.
 func (e ExecutionPayloadEnvelope) MarshalJSON() ([]byte, error) {
 	type ExecutionPayloadEnvelope struct {
-		ExecutionPayload *ExecutableData `json:"executionPayload"  gencodec:"required"`
-		BlockValue       *hexutil.Big    `json:"blockValue"  gencodec:"required"`
-		Override         bool            `json:"shouldOverrideBuilder"`
+		ExecutionPayload  *ExecutableData `json:"executionPayload"  gencodec:"required"`
+		BlockValue        *hexutil.Big    `json:"blockValue"  gencodec:"required"`
+		Override          bool            `json:"shouldOverrideBuilder"`
+		ExecutionRequests []hexutil.Bytes `json:"executionRequests,omitempty"`
 	}
 	var enc ExecutionPayloadEnvelope
 	enc.ExecutionPayload = e.ExecutionPayload
 	enc.BlockValue = (*hexutil.Big)(e.BlockValue)
 	enc.Override = e.Override
+	enc.ExecutionRequests = e.ExecutionRequests
 	return json.Marshal(&enc)
 }
 
 // UnmarshalJSON unmarshals from JSON.
 func (e *ExecutionPayloadEnvelope) UnmarshalJSON(input []byte) error {
 	type ExecutionPayloadEnvelope struct {
-		ExecutionPayload *ExecutableData `json:"executionPayload"  gencodec:"required"`
-		BlockValue       *hexutil.Big    `json:"blockValue"  gencodec:"required"`
-		Override         *bool           `json:"shouldOverrideBuilder"`
+		ExecutionPayload  *ExecutableData `json:"executionPayload"  gencodec:"required"`
+		BlockValue        *hexutil.Big    `json:"blockValue"  gencodec:"required"`
+		Override          *bool           `json:"shouldOverrideBuilder"`
+		ExecutionRequests []hexutil.Bytes `json:"executionRequests,omitempty"`
 	}
 	var dec ExecutionPayloadEnvelope
 	if err := json.Unmarshal(input, &dec); err != nil {
@@ -47,6 +50,9 @@ func (e *ExecutionPayloadEnvelope) UnmarshalJSON(input []byte) error {
 	e.BlockValue = (*big.Int)(dec.BlockValue)
 	if dec.Override != nil {
 		e.Override = *dec.Override
+	}
+	if dec.ExecutionRequests != nil {
+		e.ExecutionRequests = dec.ExecutionRequests
 	}
 	return nil
 }

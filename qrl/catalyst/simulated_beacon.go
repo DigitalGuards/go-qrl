@@ -25,6 +25,7 @@ import (
 
 	"github.com/theQRL/go-qrl/beacon/engine"
 	"github.com/theQRL/go-qrl/common"
+	"github.com/theQRL/go-qrl/common/hexutil"
 	"github.com/theQRL/go-qrl/core/txpool"
 	"github.com/theQRL/go-qrl/core/types"
 	"github.com/theQRL/go-qrl/log"
@@ -202,7 +203,11 @@ func (c *SimulatedBeacon) sealBlock(withdrawals []*types.Withdrawal, timestamp u
 
 	// Mark the payload as canon
 	if beaconRoot != nil {
-		_, err = c.engineAPI.NewPayloadWithBeaconRootV1(*payload, beaconRoot)
+		var requests *[]hexutil.Bytes
+		if c.qrl.BlockChain().Config().IsQRLExitRequests(payload.Timestamp) {
+			requests = &envelope.ExecutionRequests
+		}
+		_, err = c.engineAPI.NewPayloadWithBeaconRootV1(*payload, beaconRoot, requests)
 	} else {
 		_, err = c.engineAPI.NewPayloadV2(*payload)
 	}
