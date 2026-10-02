@@ -228,6 +228,14 @@ func TestBeaconRootPendingViewRemainsAvailable(t *testing.T) {
 	if err != nil || state == nil || header == nil || header.ParentBeaconRoot != nil {
 		t.Fatalf("pending RPC state: %v", err)
 	}
+	// With no beacon parent, the pending view holds no history entry for its
+	// own timestamp, so a read of that timestamp reverts until a block is
+	// sealed. Earlier canonical entries stay readable.
+	length := stakingroots.ExperimentalHistoryLength
+	stamp := state.GetState(stakingroots.ExperimentalAddress(), common.BigToHash(new(big.Int).SetUint64(header.Time%length)))
+	if new(big.Int).SetBytes(stamp[:]).Uint64() == header.Time {
+		t.Fatal("pending view recorded a history entry without a beacon parent")
+	}
 	if _, err := api.qrl.Miner().BuildPayload(&miner.BuildPayloadArgs{Parent: api.qrl.BlockChain().CurrentBlock().Hash(), Timestamp: header.Time, Withdrawals: types.Withdrawals{}}); err == nil {
 		t.Fatal("canonical builder accepted the pending simulation's absent root")
 	}

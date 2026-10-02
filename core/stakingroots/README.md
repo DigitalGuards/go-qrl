@@ -10,6 +10,10 @@ This package implements a native QRVM history runtime and an isolated system-cal
 
 The caller must supply authenticated protocol context. Integration still needs fork installation/collision rules, parent-root header and Engine commitments, payload cache separation, CL parent binding, genesis handling and a single pre-block operation in construction, import, historical replay and tracing. The helper cannot authenticate a beacon root by itself.
 
+## Pending view
+
+The `pending` RPC view has no consensus-selected beacon parent, so it skips the history write for its own timestamp. go-ethereum's pending block skips the EIP-4788 write the same way. Reads of earlier, canonical timestamps work in the pending view; a read for the pending block's own timestamp reverts until a block with that timestamp is sealed. Calls against `latest` (the `qrl_estimateGas` default) execute with the latest sealed block's timestamp, whose entry exists. A contract that reads `block.timestamp` should therefore be simulated against `latest`. Writing a placeholder root would let simulations succeed with a value that no consensus client authenticated.
+
 ## Local checks
 
 ```sh
