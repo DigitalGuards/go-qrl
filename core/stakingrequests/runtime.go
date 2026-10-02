@@ -15,18 +15,31 @@ import (
 // account, here the validator's withdrawal recipient, pays to enqueue an exit
 // and the system caller drains a bounded batch each block.
 //
-// Ordinary callers submit exactly 40 bytes and pay at least MinimumFee. The
-// entire payment, including overpayment, stays in the queue account. This
-// prototype has no refund, fee collection, or fee adjustment policy.
+// Ordinary callers submit exactly 40 bytes and pay at least the current fee,
+// or read the fee with empty input and zero value. The fee is EIP-7002's
+// fake_exponential(MinimumFee, excess, FeeUpdateFraction), so sustained demand
+// above TargetPerBlock raises it exponentially while the FIFO stays unbounded.
+// The entire payment, including overpayment, stays in the queue account.
 //
 // Only systemCaller can drain, using empty input and zero value. The drain
 // returns at most MaxPerBlock concatenated 104-byte records without a
-// request-type byte.
-// Storage slots 0 and 1 hold the bounded ring head and count; slots 16 through 39
-// hold eight records, each as source, index, and key root. Consumed slots clear.
+// request-type byte, then sets excess to max(0, excess + count - target) and
+// resets count. Storage follows EIP-7002: slot 0 excess, slot 1 requests added
+// since the last drain, slots 2 and 3 queue head and tail, and three slots per
+// record (source, index, key root) from slot 4. Consumed slots clear, and an
+// empty queue resets head and tail to zero.
 func Runtime(systemCaller common.Address) ([]byte, error) {
 	return runtimeCode(systemCaller, MaxPerBlock)
 }
+
+// Storage slots of the queue runtime.
+const (
+	excessSlot  = 0
+	countSlot   = 1
+	headSlot    = 2
+	tailSlot    = 3
+	queueOffset = 4
+)
 
 // runtimeCode takes the drain bound as a parameter so tests can check that
 // the generated drain stays correct when the MaxPerBlock fixture changes.
@@ -34,8 +47,8 @@ func runtimeCode(systemCaller common.Address, maxPerBlock int) ([]byte, error) {
 	if systemCaller == (common.Address{}) {
 		return nil, errors.New("system caller must be nonzero")
 	}
-	if maxPerBlock < 1 || maxPerBlock > MaxPending {
-		return nil, fmt.Errorf("drain bound %d outside 1..%d", maxPerBlock, MaxPending)
+	if maxPerBlock < 1 || maxPerBlock*RecordBytes > baseMemory {
+		return nil, fmt.Errorf("drain bound %d outside 1..%d", maxPerBlock, baseMemory/RecordBytes)
 	}
 	a := &assembler{labels: make(map[string]int)}
 	a.op(vm.CALLER)
@@ -43,30 +56,36 @@ func runtimeCode(systemCaller common.Address, maxPerBlock int) ([]byte, error) {
 	a.op(vm.EQ)
 	a.jump("drain", true)
 
+	a.fee()
+	// Empty input with zero value returns the current fee as one word.
+	a.op(vm.CALLDATASIZE)
+	a.jump("submit", true)
+	a.op(vm.CALLVALUE)
+	a.jump("fail", true)
+	a.num(0)
+	a.op(vm.MSTORE)
+	a.ret(64)
+
+	a.label("submit")
 	a.op(vm.CALLDATASIZE)
 	a.num(SubmissionBytes)
 	a.op(vm.EQ, vm.ISZERO)
 	a.jump("fail", true)
-	a.num(MinimumFee)
 	a.op(vm.CALLVALUE, vm.LT)
 	a.jump("fail", true)
-	a.num(MaxPending)
-	a.num(1)
-	a.op(vm.SLOAD, vm.LT, vm.ISZERO)
-	a.jump("fail", true)
+	a.increment(countSlot)
 
-	// base = 16 + 3 * ((head + count) % 8).
-	a.num(MaxPending)
-	a.num(0)
+	// base = queueOffset + 3 * tail.
+	a.num(tailSlot)
 	a.op(vm.SLOAD)
-	a.num(1)
-	a.op(vm.SLOAD, vm.ADD, vm.MOD)
 	a.num(3)
 	a.op(vm.MUL)
-	a.num(16)
-	a.op(vm.ADD, vm.DUP1)
+	a.num(queueOffset)
+	a.op(vm.ADD)
 	a.num(baseMemory)
-	a.op(vm.MSTORE, vm.CALLER, vm.SWAP1, vm.SSTORE)
+	a.op(vm.MSTORE, vm.CALLER)
+	a.base(0)
+	a.op(vm.SSTORE)
 
 	// A 64-byte CALLDATALOAD places the 8-byte index in the top 64 bits.
 	a.num(0)
@@ -81,28 +100,26 @@ func runtimeCode(systemCaller common.Address, maxPerBlock int) ([]byte, error) {
 	a.op(vm.SHR)
 	a.base(2)
 	a.op(vm.SSTORE)
-	a.num(1)
-	a.op(vm.SLOAD)
-	a.num(1)
-	a.op(vm.ADD)
-	a.num(1)
-	a.op(vm.SSTORE, vm.STOP)
+	a.increment(tailSlot)
+	a.op(vm.STOP)
 
 	a.label("drain")
 	a.op(vm.CALLDATASIZE)
 	a.jump("fail", true)
 	a.op(vm.CALLVALUE)
 	a.jump("fail", true)
-	// An empty queue before record i returns the i records already copied.
+	// An empty queue before record i finishes with the i records already copied.
 	for i := 0; i < maxPerBlock; i++ {
-		a.num(1)
-		a.op(vm.SLOAD, vm.ISZERO)
-		a.jump(returnLabel(i), true)
-		a.num(0)
+		a.num(headSlot)
+		a.op(vm.SLOAD)
+		a.num(tailSlot)
+		a.op(vm.SLOAD, vm.EQ)
+		a.jump(drainedLabel(i), true)
+		a.num(headSlot)
 		a.op(vm.SLOAD)
 		a.num(3)
 		a.op(vm.MUL)
-		a.num(16)
+		a.num(queueOffset)
 		a.op(vm.ADD)
 		a.num(baseMemory)
 		a.op(vm.MSTORE)
@@ -134,24 +151,56 @@ func runtimeCode(systemCaller common.Address, maxPerBlock int) ([]byte, error) {
 			a.base(slot)
 			a.op(vm.SSTORE)
 		}
-		a.num(MaxPending)
-		a.num(0)
-		a.op(vm.SLOAD)
-		a.num(1)
-		a.op(vm.ADD, vm.MOD)
-		a.num(0)
-		a.op(vm.SSTORE)
-		a.num(1)
-		a.num(1)
-		a.op(vm.SLOAD, vm.SUB)
-		a.num(1)
-		a.op(vm.SSTORE)
+		a.increment(headSlot)
 	}
-	a.ret(maxPerBlock * RecordBytes)
-	for i := maxPerBlock - 1; i >= 0; i-- {
-		a.label(returnLabel(i))
-		a.ret(i * RecordBytes)
+	a.num(maxPerBlock)
+	a.jump("finish", false)
+	for i := 0; i < maxPerBlock; i++ {
+		a.label(drainedLabel(i))
+		a.num(i)
+		a.jump("finish", false)
 	}
+
+	// Stack: [records]. Reset an empty queue to slot zero, as EIP-7002 does.
+	a.label("finish")
+	a.num(headSlot)
+	a.op(vm.SLOAD)
+	a.num(tailSlot)
+	a.op(vm.SLOAD, vm.EQ, vm.ISZERO)
+	a.jump("excess", true)
+	a.num(0)
+	a.num(headSlot)
+	a.op(vm.SSTORE)
+	a.num(0)
+	a.num(tailSlot)
+	a.op(vm.SSTORE)
+
+	// excess = max(0, excess + count - TargetPerBlock), then count = 0.
+	a.label("excess")
+	a.num(countSlot)
+	a.op(vm.SLOAD)
+	a.num(excessSlot)
+	a.op(vm.SLOAD, vm.ADD, vm.DUP1)
+	a.num(TargetPerBlock)
+	a.op(vm.LT)
+	a.jump("aboveTarget", true)
+	a.op(vm.POP)
+	a.num(0)
+	a.jump("storeExcess", false)
+	a.label("aboveTarget")
+	a.num(TargetPerBlock)
+	a.op(vm.SWAP1, vm.SUB)
+	a.label("storeExcess")
+	a.num(excessSlot)
+	a.op(vm.SSTORE)
+	a.num(0)
+	a.num(countSlot)
+	a.op(vm.SSTORE)
+	a.num(RecordBytes)
+	a.op(vm.MUL)
+	a.num(0)
+	a.op(vm.RETURN)
+
 	a.label("fail")
 	a.num(0)
 	a.num(0)
@@ -161,8 +210,8 @@ func runtimeCode(systemCaller common.Address, maxPerBlock int) ([]byte, error) {
 
 const baseMemory = 1024
 
-func returnLabel(records int) string {
-	return fmt.Sprintf("return%d", records)
+func drainedLabel(records int) string {
+	return fmt.Sprintf("drained%d", records)
 }
 
 // The local assembler emits native opcode constants, including PUSH64. Jump
@@ -229,6 +278,45 @@ func (a *assembler) base(offset int) {
 		a.num(offset)
 		a.op(vm.ADD)
 	}
+}
+
+// fee leaves fake_exponential(MinimumFee, excess, FeeUpdateFraction) on the
+// stack, the EIP-4844 helper that EIP-7002 reuses. Stack during the loop, top
+// first: accumulator, output, i. 64-byte words cannot overflow before the fee
+// exceeds any payable amount, so admission is unreachable well before then.
+func (a *assembler) fee() {
+	a.num(1)
+	a.num(0)
+	a.num(MinimumFee * FeeUpdateFraction)
+	a.label("feeLoop")
+	a.op(vm.DUP1, vm.ISZERO)
+	a.jump("feeDone", true)
+	// output += accumulator
+	a.op(vm.DUP1, vm.SWAP2, vm.ADD, vm.SWAP1)
+	// accumulator = accumulator * excess / (FeeUpdateFraction * i)
+	a.num(excessSlot)
+	a.op(vm.SLOAD, vm.MUL, vm.DUP3)
+	a.num(FeeUpdateFraction)
+	a.op(vm.MUL, vm.SWAP1, vm.DIV)
+	// i += 1
+	a.op(vm.SWAP2)
+	a.num(1)
+	a.op(vm.ADD, vm.SWAP2)
+	a.jump("feeLoop", false)
+	a.label("feeDone")
+	a.op(vm.POP)
+	a.num(FeeUpdateFraction)
+	a.op(vm.SWAP1, vm.DIV, vm.SWAP1, vm.POP)
+}
+
+// increment adds one to a storage slot.
+func (a *assembler) increment(slot int) {
+	a.num(slot)
+	a.op(vm.SLOAD)
+	a.num(1)
+	a.op(vm.ADD)
+	a.num(slot)
+	a.op(vm.SSTORE)
 }
 
 func (a *assembler) ret(size int) {

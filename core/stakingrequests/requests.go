@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
 
 	"github.com/theQRL/go-qrl/common"
 )
@@ -22,11 +23,32 @@ const (
 	RecordBytes          = 64 + 8 + 32
 	SubmissionBytes      = 8 + 32
 	PublicKeyBytes       = 2592
-	// These bounds and the admission fee are deliberately small test fixtures.
-	MaxPending  = 8
-	MaxPerBlock = 2
-	MinimumFee  = 1
+	// The fee and processing parameters take EIP-7002's shape. The values are
+	// deliberately small fixtures awaiting qualification; EIP-7002 itself uses
+	// 16 records per block and a target of 2.
+	MaxPerBlock       = 2
+	TargetPerBlock    = 1
+	MinimumFee        = 1
+	FeeUpdateFraction = 17
 )
+
+// Fee returns the admission fee for a queue excess, using EIP-7002's
+// fake_exponential(MinimumFee, excess, FeeUpdateFraction). The native runtime
+// computes the same value; callers can use this to price a submission.
+func Fee(excess uint64) *big.Int {
+	var (
+		denominator = big.NewInt(FeeUpdateFraction)
+		numerator   = new(big.Int).SetUint64(excess)
+		output      = new(big.Int)
+		accumulator = new(big.Int).Mul(big.NewInt(MinimumFee), denominator)
+	)
+	for i := int64(1); accumulator.Sign() > 0; i++ {
+		output.Add(output, accumulator)
+		accumulator.Mul(accumulator, numerator)
+		accumulator.Div(accumulator, new(big.Int).Mul(denominator, big.NewInt(i)))
+	}
+	return output.Div(output, denominator)
+}
 
 // Request identifies one full exit. Source must come from execution provenance.
 type Request struct {
