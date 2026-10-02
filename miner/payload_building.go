@@ -88,6 +88,12 @@ func newPayload(empty *types.Block, id engine.PayloadID) *Payload {
 	return payload
 }
 
+// Timestamp returns the payload's block timestamp and leaves the background
+// builder running.
+func (payload *Payload) Timestamp() uint64 {
+	return payload.empty.Time()
+}
+
 // update updates the full-block with latest built version.
 func (payload *Payload) update(r *newPayloadResult, elapsed time.Duration) {
 	payload.lock.Lock()

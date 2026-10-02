@@ -2,6 +2,8 @@ package stakingrequests
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"math/big"
 	"reflect"
@@ -245,5 +247,63 @@ func TestQueueAdmissionOutOfGasRollsBack(t *testing.T) {
 	got, err := f.drain()
 	if err != nil || len(got) != 0 || f.db.GetBalance(f.user).Cmp(beforeUser) != 0 || f.db.GetBalance(f.address).Sign() != 0 {
 		t.Fatalf("OOG failed to roll back: %#v, %v", got, err)
+	}
+}
+
+func TestQueueDrainHonorsLargerBound(t *testing.T) {
+	const bound = 3
+	f := newQueue(t)
+	code, err := runtimeCode(f.system, bound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.db.SetCode(f.address, code)
+	want := make([]Request, 0, bound+1)
+	for i := 0; i < bound+1; i++ {
+		want = append(want, f.submit(t, uint64(i)+1))
+	}
+	for _, size := range []int{bound, 1, 0} {
+		out, err := f.call(f.system, f.address, nil, 0, 1_000_000)
+		if err != nil || len(out) != size*RecordBytes {
+			t.Fatalf("drain of %d: got %d bytes, error %v", size, len(out), err)
+		}
+		for i := 0; i < size; i++ {
+			got, err := Decode(out[i*RecordBytes : (i+1)*RecordBytes])
+			if err != nil || got != want[i] {
+				t.Fatalf("record %d: got %#v, want %#v, error %v", i, got, want[i], err)
+			}
+		}
+		want = want[size:]
+	}
+	for _, bound := range []int{0, MaxPending + 1} {
+		if _, err := runtimeCode(f.system, bound); err == nil {
+			t.Fatalf("accepted drain bound %d", bound)
+		}
+	}
+}
+
+// The system call rejects any account whose code differs from the assembled
+// runtime, so these bytes are consensus-critical once a fork activates. Pin
+// them to catch silent changes in the assembler or in vm.OpCode values.
+func TestRuntimeBytecodeGolden(t *testing.T) {
+	queue, err := Runtime(stakingroots.ExperimentalSystemCaller())
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots, err := stakingroots.Runtime(stakingroots.ExperimentalSystemCaller(), stakingroots.ExperimentalHistoryLength)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct {
+		name, want string
+		code       []byte
+	}{
+		{"exit queue", "5dadc6fb80ac08db59b369eb7d0016a2ae3cc4ef8add75eef3b71979bd09a870", queue},
+		{"root history", "02cac1b87f68f917545ee5b768c2054e87de336233d74cd8487965e8f66acaae", roots},
+	} {
+		sum := sha256.Sum256(item.code)
+		if got := hex.EncodeToString(sum[:]); got != item.want {
+			t.Errorf("%s runtime sha256 %s, want %s", item.name, got, item.want)
+		}
 	}
 }

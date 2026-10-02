@@ -3,6 +3,7 @@ package stakingrequests
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 
 	"github.com/theQRL/go-qrl/common"
 	"github.com/theQRL/go-qrl/core/vm"
@@ -10,18 +11,31 @@ import (
 
 // Runtime assembles the experimental queue for an explicitly selected system
 // caller. It has no deployment address and is never installed automatically.
+// The design follows the EIP-7002 withdrawal request contract: an execution
+// account, here the validator's withdrawal recipient, pays to enqueue an exit
+// and the system caller drains a bounded batch each block.
 //
 // Ordinary callers submit exactly 40 bytes and pay at least MinimumFee. The
 // entire payment, including overpayment, stays in the queue account. This
 // prototype has no refund, fee collection, or fee adjustment policy.
 //
 // Only systemCaller can drain, using empty input and zero value. The drain
-// returns at most two concatenated 104-byte records without a request-type byte.
+// returns at most MaxPerBlock concatenated 104-byte records without a
+// request-type byte.
 // Storage slots 0 and 1 hold the bounded ring head and count; slots 16 through 39
 // hold eight records, each as source, index, and key root. Consumed slots clear.
 func Runtime(systemCaller common.Address) ([]byte, error) {
+	return runtimeCode(systemCaller, MaxPerBlock)
+}
+
+// runtimeCode takes the drain bound as a parameter so tests can check that
+// the generated drain stays correct when the MaxPerBlock fixture changes.
+func runtimeCode(systemCaller common.Address, maxPerBlock int) ([]byte, error) {
 	if systemCaller == (common.Address{}) {
 		return nil, errors.New("system caller must be nonzero")
+	}
+	if maxPerBlock < 1 || maxPerBlock > MaxPending {
+		return nil, fmt.Errorf("drain bound %d outside 1..%d", maxPerBlock, MaxPending)
 	}
 	a := &assembler{labels: make(map[string]int)}
 	a.op(vm.CALLER)
@@ -79,14 +93,11 @@ func Runtime(systemCaller common.Address) ([]byte, error) {
 	a.jump("fail", true)
 	a.op(vm.CALLVALUE)
 	a.jump("fail", true)
-	for i := 0; i < MaxPerBlock; i++ {
+	// An empty queue before record i returns the i records already copied.
+	for i := 0; i < maxPerBlock; i++ {
 		a.num(1)
 		a.op(vm.SLOAD, vm.ISZERO)
-		if i == 0 {
-			a.jump("return0", true)
-		} else {
-			a.jump("return1", true)
-		}
+		a.jump(returnLabel(i), true)
 		a.num(0)
 		a.op(vm.SLOAD)
 		a.num(3)
@@ -136,11 +147,11 @@ func Runtime(systemCaller common.Address) ([]byte, error) {
 		a.num(1)
 		a.op(vm.SSTORE)
 	}
-	a.ret(2 * RecordBytes)
-	a.label("return1")
-	a.ret(RecordBytes)
-	a.label("return0")
-	a.ret(0)
+	a.ret(maxPerBlock * RecordBytes)
+	for i := maxPerBlock - 1; i >= 0; i-- {
+		a.label(returnLabel(i))
+		a.ret(i * RecordBytes)
+	}
 	a.label("fail")
 	a.num(0)
 	a.num(0)
@@ -149,6 +160,10 @@ func Runtime(systemCaller common.Address) ([]byte, error) {
 }
 
 const baseMemory = 1024
+
+func returnLabel(records int) string {
+	return fmt.Sprintf("return%d", records)
+}
 
 // The local assembler emits native opcode constants, including PUSH64. Jump
 // targets are fixed-width PUSH2 operands patched after labels have been emitted.

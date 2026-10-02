@@ -239,3 +239,35 @@ func TestBeaconRootPendingViewRemainsAvailable(t *testing.T) {
 		t.Fatalf("pending simulation accepted as canonical: %v %+v", err, status)
 	}
 }
+
+func TestBeaconRootWrongGetPayloadKeepsBuilderRunning(t *testing.T) {
+	activation := uint64(9060)
+	api := rootAPI(t, &activation)
+	parent := api.qrl.BlockChain().CurrentBlock()
+	choice := engine.ForkchoiceStateV1{HeadBlockHash: parent.Hash()}
+	root := common.Hash{3}
+	attrs := &engine.PayloadAttributes{Timestamp: activation, Withdrawals: []*types.Withdrawal{}, ParentBeaconBlockRoot: &root}
+	response, err := api.ForkchoiceUpdatedWithBeaconRootV1(choice, attrs)
+	if err != nil || response.PayloadID == nil {
+		t.Fatalf("activation build: %v", err)
+	}
+	id := *response.PayloadID
+	if _, err := api.GetPayloadV2(id); err == nil {
+		t.Fatal("legacy get accepted activated payload")
+	}
+	// Resolving stops the builder. ResolveFull then returns nil unless the full
+	// block happened to exist already, so a rejected call must leave it running.
+	full := make(chan *engine.ExecutionPayloadEnvelope, 1)
+	go func() { full <- api.localBlocks.get(id, true) }()
+	select {
+	case envelope := <-full:
+		if envelope == nil {
+			t.Fatal("rejected get stopped the payload builder")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("full payload was never built")
+	}
+	if _, err := api.GetPayloadWithBeaconRootV1(engine.PayloadID{1}); err != engine.UnknownPayload {
+		t.Fatalf("unknown payload error %v", err)
+	}
+}

@@ -231,9 +231,15 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 	}
 	blocks, receipts := make(types.Blocks, n), make([]types.Receipts, n)
 	chainreader := &fakeChainReader{config: config}
+	generated := &generatedChain{engine: engine, headers: map[common.Hash]*types.Header{parent.Hash(): parent.Header()}}
 	genblock := func(i int, parent *types.Block, triedb *trie.Database, statedb *state.StateDB) (*types.Block, types.Receipts) {
 		b := &BlockGen{i: i, chain: blocks, parent: parent, statedb: statedb, config: config, engine: engine}
 		b.header = makeHeader(chainreader, parent, statedb)
+		// Like go-ethereum's EIP-4788 support, run the pre-transaction root
+		// write so generated blocks match what the state processor executes.
+		if err := ProcessBeaconRoot(config, generated, b.header, statedb); err != nil {
+			panic(err)
+		}
 
 		// Execute any user modifications to the block
 		if gen != nil {
@@ -271,6 +277,9 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 		blocks[i] = block
 		receipts[i] = receipt
 		parent = block
+		if block != nil {
+			generated.headers[block.Hash()] = block.Header()
+		}
 	}
 	return blocks, receipts
 }
@@ -305,6 +314,11 @@ func makeHeader(chain consensus.ChainReader, parent *types.Block, state *state.S
 		Number:     new(big.Int).Add(parent.Number(), common.Big1),
 		Time:       time,
 		BaseFee:    eip1559.CalcBaseFee(chain.Config(), parent.Header()),
+	}
+	// Generated blocks have no consensus client, so they commit to a zero
+	// parent beacon root once the experimental fork is active.
+	if chain.Config().IsQRLBeaconRoots(header.Time) {
+		header.ParentBeaconRoot = new(common.Hash)
 	}
 
 	return header
@@ -344,6 +358,22 @@ func makeBlockChainWithGenesis(genesis *Genesis, n int, engine consensus.Engine,
 		b.SetCoinbase(common.Address{0: byte(seed), 19: byte(i)})
 	})
 	return db, blocks
+}
+
+// generatedChain resolves the parent headers of blocks under construction so
+// that ProcessBeaconRoot can detect the activation block.
+type generatedChain struct {
+	engine  consensus.Engine
+	headers map[common.Hash]*types.Header
+}
+
+func (c *generatedChain) Engine() consensus.Engine { return c.engine }
+
+func (c *generatedChain) GetHeader(hash common.Hash, number uint64) *types.Header {
+	if header := c.headers[hash]; header != nil && header.Number.Uint64() == number {
+		return header
+	}
+	return nil
 }
 
 type fakeChainReader struct {

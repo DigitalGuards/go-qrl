@@ -172,6 +172,9 @@ func (api *ConsensusAPI) ForkchoiceUpdatedV2(update engine.ForkchoiceStateV1, pa
 }
 
 // ForkchoiceUpdatedWithBeaconRootV1 builds an experimental native root payload.
+// The three WithBeaconRoot methods carry the parent beacon block root the way
+// EIP-4788 extended Ethereum's Engine API in engine_forkchoiceUpdatedV3,
+// engine_getPayloadV3 and engine_newPayloadV3.
 func (api *ConsensusAPI) ForkchoiceUpdatedWithBeaconRootV1(update engine.ForkchoiceStateV1, attrs *engine.PayloadAttributes) (engine.ForkChoiceResponse, error) {
 	if attrs == nil || attrs.ParentBeaconBlockRoot == nil || attrs.Withdrawals == nil {
 		return engine.STATUS_INVALID, engine.InvalidPayloadAttributes.With(errors.New("experimental attributes require parent beacon root and withdrawals"))
@@ -330,19 +333,27 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 
 // GetPayloadV2 returns a cached payload by id.
 func (api *ConsensusAPI) GetPayloadV2(payloadID engine.PayloadID) (*engine.ExecutionPayloadEnvelope, error) {
-	data, err := api.getPayload(payloadID, false)
-	if err == nil && api.qrl.BlockChain().Config().IsQRLBeaconRoots(data.ExecutionPayload.Timestamp) {
-		return nil, engine.UnsupportedFork
-	}
-	return data, err
+	return api.getPayloadForFork(payloadID, false)
 }
 
+// GetPayloadWithBeaconRootV1 returns a cached payload built after the
+// experimental beacon-root fork.
 func (api *ConsensusAPI) GetPayloadWithBeaconRootV1(payloadID engine.PayloadID) (*engine.ExecutionPayloadEnvelope, error) {
-	data, err := api.getPayload(payloadID, false)
-	if err == nil && !api.qrl.BlockChain().Config().IsQRLBeaconRoots(data.ExecutionPayload.Timestamp) {
+	return api.getPayloadForFork(payloadID, true)
+}
+
+// getPayloadForFork checks the method against the payload's fork before
+// resolving it. Resolve stops the background builder, so a call to the wrong
+// method must be rejected while the payload is still being improved.
+func (api *ConsensusAPI) getPayloadForFork(payloadID engine.PayloadID, beaconRoots bool) (*engine.ExecutionPayloadEnvelope, error) {
+	timestamp, ok := api.localBlocks.timestamp(payloadID)
+	if !ok {
+		return nil, engine.UnknownPayload
+	}
+	if api.qrl.BlockChain().Config().IsQRLBeaconRoots(timestamp) != beaconRoots {
 		return nil, engine.UnsupportedFork
 	}
-	return data, err
+	return api.getPayload(payloadID, false)
 }
 
 func (api *ConsensusAPI) getPayload(payloadID engine.PayloadID, full bool) (*engine.ExecutionPayloadEnvelope, error) {

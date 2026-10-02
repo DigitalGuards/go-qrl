@@ -12,6 +12,7 @@ import (
 	"github.com/theQRL/go-qrl/core/stakingroots"
 	"github.com/theQRL/go-qrl/core/state"
 	"github.com/theQRL/go-qrl/core/types"
+	"github.com/theQRL/go-qrl/core/vm"
 	"github.com/theQRL/go-qrl/params"
 	"github.com/theQRL/go-qrl/trie"
 )
@@ -129,5 +130,45 @@ func TestBeaconRootActivationAndFailure(t *testing.T) {
 	wrong.SetCode(address, []byte{0})
 	if err := ProcessBeaconRoot(&config, chain, header, wrong); err == nil {
 		t.Fatal("accepted wrong runtime after activation")
+	}
+}
+
+func TestBeaconRootGeneratedChainImportsAcrossActivation(t *testing.T) {
+	// Generated blocks are ten seconds apart, so block 3 activates the fork.
+	activation := uint64(30)
+	config := *params.TestChainConfig
+	config.QRLBeaconRootsTime = &activation
+	genesis := &Genesis{Config: &config, Alloc: GenesisAlloc{}}
+	_, blocks, _ := GenerateChainWithGenesis(genesis, beacon.NewFaker(), 5, nil)
+	for i, block := range blocks {
+		if active := block.Time() >= activation; active != (block.BeaconRoot() != nil) {
+			t.Fatalf("block %d at time %d: beacon root presence %v", i+1, block.Time(), !active)
+		}
+	}
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, genesis, beacon.NewFaker(), vm.Config{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer chain.Stop()
+	if n, err := chain.InsertChain(blocks); err != nil {
+		t.Fatalf("generated block %d rejected on import: %v", n, err)
+	}
+	statedb, err := chain.State()
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := stakingroots.ExperimentalAddress()
+	if len(statedb.GetCode(address)) == 0 {
+		t.Fatal("history runtime not installed at activation")
+	}
+	length := stakingroots.ExperimentalHistoryLength
+	for _, block := range blocks {
+		index := block.Time() % length
+		stamp := statedb.GetState(address, common.BigToHash(new(big.Int).SetUint64(index)))
+		root := statedb.GetState(address, common.BigToHash(new(big.Int).SetUint64(index+length)))
+		recorded := new(big.Int).SetBytes(stamp[:]).Uint64() == block.Time()
+		if recorded != (block.Time() >= activation) || !bytes.Equal(root[:32], make([]byte, 32)) {
+			t.Fatalf("history entry for time %d: timestamp %x, root %x", block.Time(), stamp, root)
+		}
 	}
 }
