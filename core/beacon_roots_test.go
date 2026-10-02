@@ -172,3 +172,27 @@ func TestBeaconRootGeneratedChainImportsAcrossActivation(t *testing.T) {
 		}
 	}
 }
+
+func TestBeaconRootGenesisCollisionReturnsError(t *testing.T) {
+	zero := uint64(0)
+	config := *params.TestChainConfig
+	config.QRLBeaconRootsTime = &zero
+	db := rawdb.NewMemoryDatabase()
+	triedb := trie.NewDatabase(db, nil)
+	if _, err := (&Genesis{Config: &config, Alloc: GenesisAlloc{}}).Commit(db, triedb); err != nil {
+		t.Fatal(err)
+	}
+	collision := &Genesis{Config: &config, Alloc: GenesisAlloc{stakingroots.ExperimentalAddress(): {Balance: big.NewInt(1), Nonce: 2}}}
+	// Both calls reach ToBlock once a genesis is stored; they must return the
+	// collision instead of panicking.
+	if _, _, err := SetupGenesisBlock(db, triedb, collision); err == nil {
+		t.Fatal("setup accepted reserved genesis allocation collision")
+	}
+	// LoadChainConfig reaches ToBlock when a genesis hash is stored without
+	// its chain config.
+	headerOnly := rawdb.NewMemoryDatabase()
+	rawdb.WriteCanonicalHash(headerOnly, common.Hash{1}, 0)
+	if _, err := LoadChainConfig(headerOnly, collision); err == nil {
+		t.Fatal("config load accepted reserved genesis allocation collision")
+	}
+}

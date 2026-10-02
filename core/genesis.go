@@ -300,6 +300,12 @@ func SetupGenesisBlockWithOverride(db qrldb.Database, triedb *trie.Database, gen
 	if genesis != nil && genesis.Config == nil {
 		return params.AllBeaconProtocolChanges, common.Hash{}, errGenesisNoConfig
 	}
+	// ToBlock panics on an invalid experimental allocation, so report it here.
+	if genesis != nil {
+		if _, err := genesis.beaconRootAlloc(); err != nil {
+			return genesis.Config, common.Hash{}, err
+		}
+	}
 	// Just commit the new block if there is no stored genesis block.
 	stored := rawdb.ReadCanonicalHash(db, 0)
 	if (stored == common.Hash{}) {
@@ -397,6 +403,9 @@ func LoadChainConfig(db qrldb.Database, genesis *Genesis) (*params.ChainConfig, 
 		// Reject invalid genesis spec without valid chain config
 		if genesis.Config == nil {
 			return nil, errGenesisNoConfig
+		}
+		if _, err := genesis.beaconRootAlloc(); err != nil {
+			return nil, err
 		}
 		// If the canonical genesis header is present, but the chain
 		// config is missing(initialize the empty leveldb with an
