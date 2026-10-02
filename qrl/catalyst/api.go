@@ -77,6 +77,9 @@ var caps = []string{
 	"engine_forkchoiceUpdatedV2",
 	"engine_getPayloadV2",
 	"engine_newPayloadV2",
+	"engine_forkchoiceUpdatedWithBeaconRootV1",
+	"engine_getPayloadWithBeaconRootV1",
+	"engine_newPayloadWithBeaconRootV1",
 	"engine_getPayloadBodiesByHashV1",
 	"engine_getPayloadBodiesByRangeV1",
 }
@@ -159,10 +162,24 @@ func newConsensusAPIWithoutHeartbeat(qrl *qrl.QRL) *ConsensusAPI {
 // and return its payloadID.
 // ForkchoiceUpdatedV2 is equivalent to V1 with the addition of withdrawals in the payload attributes.
 func (api *ConsensusAPI) ForkchoiceUpdatedV2(update engine.ForkchoiceStateV1, params *engine.PayloadAttributes) (engine.ForkChoiceResponse, error) {
+	if params != nil && (params.ParentBeaconBlockRoot != nil || api.qrl.BlockChain().Config().IsQRLBeaconRoots(params.Timestamp)) {
+		return engine.STATUS_INVALID, engine.UnsupportedFork.With(errors.New("experimental beacon roots require the dedicated Engine method"))
+	}
 	if params != nil && params.Withdrawals == nil {
 		return engine.STATUS_INVALID, engine.InvalidPayloadAttributes.With(errors.New("missing withdrawals"))
 	}
 	return api.forkchoiceUpdated(update, params, false)
+}
+
+// ForkchoiceUpdatedWithBeaconRootV1 builds an experimental native root payload.
+func (api *ConsensusAPI) ForkchoiceUpdatedWithBeaconRootV1(update engine.ForkchoiceStateV1, attrs *engine.PayloadAttributes) (engine.ForkChoiceResponse, error) {
+	if attrs == nil || attrs.ParentBeaconBlockRoot == nil || attrs.Withdrawals == nil {
+		return engine.STATUS_INVALID, engine.InvalidPayloadAttributes.With(errors.New("experimental attributes require parent beacon root and withdrawals"))
+	}
+	if !api.qrl.BlockChain().Config().IsQRLBeaconRoots(attrs.Timestamp) {
+		return engine.STATUS_INVALID, engine.UnsupportedFork
+	}
+	return api.forkchoiceUpdated(update, attrs, false)
 }
 
 func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes, simulatorMode bool) (engine.ForkChoiceResponse, error) {
@@ -274,11 +291,12 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 	// will replace it arbitrarily many times in between.
 	if payloadAttributes != nil {
 		args := &miner.BuildPayloadArgs{
-			Parent:       update.HeadBlockHash,
-			Timestamp:    payloadAttributes.Timestamp,
-			FeeRecipient: payloadAttributes.SuggestedFeeRecipient,
-			Random:       payloadAttributes.Random,
-			Withdrawals:  payloadAttributes.Withdrawals,
+			Parent:           update.HeadBlockHash,
+			Timestamp:        payloadAttributes.Timestamp,
+			FeeRecipient:     payloadAttributes.SuggestedFeeRecipient,
+			Random:           payloadAttributes.Random,
+			Withdrawals:      payloadAttributes.Withdrawals,
+			ParentBeaconRoot: payloadAttributes.ParentBeaconBlockRoot,
 		}
 		id := args.Id()
 		// If we already are busy generating this work, then we do not need
@@ -312,7 +330,19 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 
 // GetPayloadV2 returns a cached payload by id.
 func (api *ConsensusAPI) GetPayloadV2(payloadID engine.PayloadID) (*engine.ExecutionPayloadEnvelope, error) {
-	return api.getPayload(payloadID, false)
+	data, err := api.getPayload(payloadID, false)
+	if err == nil && api.qrl.BlockChain().Config().IsQRLBeaconRoots(data.ExecutionPayload.Timestamp) {
+		return nil, engine.UnsupportedFork
+	}
+	return data, err
+}
+
+func (api *ConsensusAPI) GetPayloadWithBeaconRootV1(payloadID engine.PayloadID) (*engine.ExecutionPayloadEnvelope, error) {
+	data, err := api.getPayload(payloadID, false)
+	if err == nil && !api.qrl.BlockChain().Config().IsQRLBeaconRoots(data.ExecutionPayload.Timestamp) {
+		return nil, engine.UnsupportedFork
+	}
+	return data, err
 }
 
 func (api *ConsensusAPI) getPayload(payloadID engine.PayloadID, full bool) (*engine.ExecutionPayloadEnvelope, error) {
@@ -326,14 +356,27 @@ func (api *ConsensusAPI) getPayload(payloadID engine.PayloadID, full bool) (*eng
 
 // NewPayloadV2 creates a QRL execution block, inserts it in the chain, and returns the status of the chain.
 func (api *ConsensusAPI) NewPayloadV2(params engine.ExecutableData) (engine.PayloadStatusV1, error) {
+	if api.qrl.BlockChain().Config().IsQRLBeaconRoots(params.Timestamp) {
+		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.UnsupportedFork
+	}
 	if params.Withdrawals == nil {
 		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(errors.New("nil withdrawals post-zond"))
 	}
 
-	return api.newPayload(params)
+	return api.newPayload(params, nil)
 }
 
-func (api *ConsensusAPI) newPayload(params engine.ExecutableData) (engine.PayloadStatusV1, error) {
+func (api *ConsensusAPI) NewPayloadWithBeaconRootV1(params engine.ExecutableData, parentBeaconBlockRoot *common.Hash) (engine.PayloadStatusV1, error) {
+	if parentBeaconBlockRoot == nil || params.Withdrawals == nil {
+		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(errors.New("experimental payload requires parent beacon root and withdrawals"))
+	}
+	if !api.qrl.BlockChain().Config().IsQRLBeaconRoots(params.Timestamp) {
+		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.UnsupportedFork
+	}
+	return api.newPayload(params, parentBeaconBlockRoot)
+}
+
+func (api *ConsensusAPI) newPayload(params engine.ExecutableData, parentBeaconRoot *common.Hash) (engine.PayloadStatusV1, error) {
 	// The locking here is, strictly, not required. Without these locks, this can happen:
 	//
 	// 1. NewPayload( execdata-N ) is invoked from the CL. It goes all the way down to
@@ -351,7 +394,7 @@ func (api *ConsensusAPI) newPayload(params engine.ExecutableData) (engine.Payloa
 	defer api.newPayloadLock.Unlock()
 
 	log.Trace("Engine API request received", "method", "NewPayload", "number", params.Number, "hash", params.BlockHash)
-	block, err := engine.ExecutableDataToBlock(params)
+	block, err := engine.ExecutableDataToBlockWithBeaconRoot(params, parentBeaconRoot)
 	if err != nil {
 		log.Warn("Invalid NewPayload params",
 			"params.Number", params.Number,

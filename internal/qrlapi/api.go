@@ -944,6 +944,9 @@ func RPCMarshalHeader(head *types.Header) map[string]any {
 	if head.WithdrawalsHash != nil {
 		result["withdrawalsRoot"] = head.WithdrawalsHash
 	}
+	if head.ParentBeaconRoot != nil {
+		result["parentBeaconBlockRoot"] = head.ParentBeaconRoot
+	}
 	return result
 }
 

@@ -36,6 +36,7 @@ type PayloadAttributes struct {
 	Random                common.Hash         `json:"prevRandao"            gencodec:"required"`
 	SuggestedFeeRecipient common.Address      `json:"suggestedFeeRecipient" gencodec:"required"`
 	Withdrawals           []*types.Withdrawal `json:"withdrawals"`
+	ParentBeaconBlockRoot *common.Hash        `json:"parentBeaconBlockRoot,omitempty"`
 }
 
 // JSON type overrides for PayloadAttributes.
@@ -154,7 +155,13 @@ func decodeTransactions(enc [][]byte) ([]*types.Transaction, error) {
 // Withdrawals value will propagate through the returned block. Empty
 // Withdrawals value must be passed via non-nil, length 0 value in data.
 func ExecutableDataToBlock(data ExecutableData) (*types.Block, error) {
-	block, err := ExecutableDataToBlockNoHash(data)
+	return ExecutableDataToBlockWithBeaconRoot(data, nil)
+}
+
+// ExecutableDataToBlockWithBeaconRoot reconstructs and checks an experimental
+// payload using the root supplied separately by its enclosing beacon block.
+func ExecutableDataToBlockWithBeaconRoot(data ExecutableData, root *common.Hash) (*types.Block, error) {
+	block, err := executableDataToBlockNoHash(data, root)
 	if err != nil {
 		return nil, err
 	}
@@ -168,6 +175,10 @@ func ExecutableDataToBlock(data ExecutableData) (*types.Block, error) {
 // for stateless execution, so it skips checking if the executable data hashes to
 // the requested hash (stateless has to *compute* the root hash, it's not given).
 func ExecutableDataToBlockNoHash(data ExecutableData) (*types.Block, error) {
+	return executableDataToBlockNoHash(data, nil)
+}
+
+func executableDataToBlockNoHash(data ExecutableData, root *common.Hash) (*types.Block, error) {
 	txs, err := decodeTransactions(data.Transactions)
 	if err != nil {
 		return nil, err
@@ -191,20 +202,21 @@ func ExecutableDataToBlockNoHash(data ExecutableData) (*types.Block, error) {
 		withdrawalsRoot = &h
 	}
 	header := &types.Header{
-		ParentHash:      data.ParentHash,
-		Coinbase:        data.FeeRecipient,
-		Root:            data.StateRoot,
-		TxHash:          types.DeriveSha(types.Transactions(txs), trie.NewStackTrie(nil)),
-		ReceiptHash:     data.ReceiptsRoot,
-		Bloom:           types.BytesToBloom(data.LogsBloom),
-		Number:          new(big.Int).SetUint64(data.Number),
-		GasLimit:        data.GasLimit,
-		GasUsed:         data.GasUsed,
-		Time:            data.Timestamp,
-		BaseFee:         data.BaseFeePerGas,
-		Extra:           data.ExtraData,
-		Random:          data.Random,
-		WithdrawalsHash: withdrawalsRoot,
+		ParentHash:       data.ParentHash,
+		Coinbase:         data.FeeRecipient,
+		Root:             data.StateRoot,
+		TxHash:           types.DeriveSha(types.Transactions(txs), trie.NewStackTrie(nil)),
+		ReceiptHash:      data.ReceiptsRoot,
+		Bloom:            types.BytesToBloom(data.LogsBloom),
+		Number:           new(big.Int).SetUint64(data.Number),
+		GasLimit:         data.GasLimit,
+		GasUsed:          data.GasUsed,
+		Time:             data.Timestamp,
+		BaseFee:          data.BaseFeePerGas,
+		Extra:            data.ExtraData,
+		Random:           data.Random,
+		WithdrawalsHash:  withdrawalsRoot,
+		ParentBeaconRoot: root,
 	}
 	return types.NewBlockWithHeader(header).
 			WithBody(types.Body{Transactions: txs, Withdrawals: data.Withdrawals}),

@@ -30,6 +30,7 @@ import (
 	"github.com/theQRL/go-qrl/common/hexutil"
 	"github.com/theQRL/go-qrl/common/math"
 	"github.com/theQRL/go-qrl/core/rawdb"
+	"github.com/theQRL/go-qrl/core/stakingroots"
 	"github.com/theQRL/go-qrl/core/state"
 	"github.com/theQRL/go-qrl/core/types"
 	"github.com/theQRL/go-qrl/log"
@@ -368,7 +369,7 @@ func SetupGenesisBlockWithOverride(db qrldb.Database, triedb *trie.Database, gen
 		return newcfg, stored, errors.New("missing head header")
 	}
 	compatErr := storedcfg.CheckCompatible(newcfg, head.Number.Uint64(), head.Time)
-	if compatErr != nil && ((head.Number.Uint64() != 0 && compatErr.RewindToBlock != 0) || (head.Time != 0 && compatErr.RewindToTime != 0)) {
+	if compatErr != nil && (compatErr.What == "experimental beacon roots" || (head.Number.Uint64() != 0 && compatErr.RewindToBlock != 0) || (head.Time != 0 && compatErr.RewindToTime != 0)) {
 		return newcfg, stored, compatErr
 	}
 	// Don't overwrite if the old is identical to the new
@@ -424,7 +425,11 @@ func (g *Genesis) configOrDefault(ghash common.Hash) *params.ChainConfig {
 
 // ToBlock returns the genesis block according to genesis specification.
 func (g *Genesis) ToBlock() *types.Block {
-	root, err := g.Alloc.deriveHash()
+	alloc, err := g.beaconRootAlloc()
+	if err != nil {
+		panic(err)
+	}
+	root, err := alloc.deriveHash()
 	if err != nil {
 		panic(err)
 	}
@@ -454,6 +459,9 @@ func (g *Genesis) ToBlock() *types.Block {
 	if conf := g.Config; conf != nil {
 		head.WithdrawalsHash = &types.EmptyWithdrawalsHash
 		withdrawals = make([]*types.Withdrawal, 0)
+		if conf.IsQRLBeaconRoots(g.Timestamp) {
+			head.ParentBeaconRoot = new(common.Hash)
+		}
 	}
 	return types.NewBlock(head, &types.Body{Withdrawals: withdrawals}, nil, trie.NewStackTrie(nil))
 }
@@ -461,6 +469,10 @@ func (g *Genesis) ToBlock() *types.Block {
 // Commit writes the block and state of a genesis specification to the database.
 // The block is committed as the canonical head block.
 func (g *Genesis) Commit(db qrldb.Database, triedb *trie.Database) (*types.Block, error) {
+	alloc, err := g.beaconRootAlloc()
+	if err != nil {
+		return nil, err
+	}
 	block := g.ToBlock()
 	if block.Number().Sign() != 0 {
 		return nil, errors.New("can't commit genesis block with number > 0")
@@ -475,7 +487,7 @@ func (g *Genesis) Commit(db qrldb.Database, triedb *trie.Database) (*types.Block
 	// All the checks has passed, flush the states derived from the genesis
 	// specification as well as the specification itself into the provided
 	// database.
-	if err := g.Alloc.flush(db, triedb, block.Hash()); err != nil {
+	if err := alloc.flush(db, triedb, block.Hash()); err != nil {
 		return nil, err
 	}
 	rawdb.WriteBlock(db, block)
@@ -486,6 +498,35 @@ func (g *Genesis) Commit(db qrldb.Database, triedb *trie.Database) (*types.Block
 	rawdb.WriteHeadHeaderHash(db, block.Hash())
 	rawdb.WriteChainConfig(db, block.Hash(), config)
 	return block, nil
+}
+
+// beaconRootAlloc adds the fork allocation without mutating caller-owned maps.
+func (g *Genesis) beaconRootAlloc() (GenesisAlloc, error) {
+	if !g.Config.IsQRLBeaconRoots(g.Timestamp) {
+		return g.Alloc, nil
+	}
+	address := stakingroots.ExperimentalAddress()
+	code, err := stakingroots.Runtime(stakingroots.ExperimentalSystemCaller(), stakingroots.ExperimentalHistoryLength)
+	if err != nil {
+		return nil, err
+	}
+	balance := new(big.Int)
+	if account, exists := g.Alloc[address]; exists {
+		empty := len(account.Code) == 0 && account.Nonce == 0
+		installed := bytes.Equal(account.Code, code) && account.Nonce == 1
+		if (!empty && !installed) || len(account.Storage) != 0 {
+			return nil, errors.New("experimental beacon history genesis allocation collision")
+		}
+		if account.Balance != nil {
+			balance.Set(account.Balance)
+		}
+	}
+	alloc := make(GenesisAlloc, len(g.Alloc)+1)
+	for address, account := range g.Alloc {
+		alloc[address] = account
+	}
+	alloc[address] = GenesisAccount{Code: code, Nonce: 1, Balance: balance}
+	return alloc, nil
 }
 
 // MustCommit writes the genesis block and state to db, panicking on error.

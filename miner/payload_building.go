@@ -36,11 +36,12 @@ import (
 // Check engine-api specification for more details.
 // https://github.com/ethereum/execution-apis/blob/main/src/engine/specification.md#payloadattributesv1
 type BuildPayloadArgs struct {
-	Parent       common.Hash       // The parent block to build payload on top
-	Timestamp    uint64            // The provided timestamp of generated payload
-	FeeRecipient common.Address    // The provided recipient address for collecting transaction fee
-	Random       common.Hash       // The provided randomness value
-	Withdrawals  types.Withdrawals // The provided withdrawals
+	Parent           common.Hash       // The parent block to build payload on top
+	Timestamp        uint64            // The provided timestamp of generated payload
+	FeeRecipient     common.Address    // The provided recipient address for collecting transaction fee
+	Random           common.Hash       // The provided randomness value
+	Withdrawals      types.Withdrawals // The provided withdrawals
+	ParentBeaconRoot *common.Hash      // Experimental parent beacon root
 }
 
 // Id computes an 8-byte identifier by hashing the components of the payload arguments.
@@ -51,6 +52,10 @@ func (args *BuildPayloadArgs) Id() engine.PayloadID {
 	hasher.Write(args.Random[:])
 	hasher.Write(args.FeeRecipient[:])
 	rlp.Encode(hasher, args.Withdrawals)
+	if args.ParentBeaconRoot != nil {
+		hasher.Write([]byte("qrl-beacon-root-v1"))
+		hasher.Write(args.ParentBeaconRoot[:])
+	}
 	var out engine.PayloadID
 	copy(out[:], hasher.Sum(nil)[:8])
 	return out
@@ -170,17 +175,26 @@ func (payload *Payload) ResolveFull() *engine.ExecutionPayloadEnvelope {
 
 // buildPayload builds the payload according to the provided parameters.
 func (miner *Miner) buildPayload(args *BuildPayloadArgs) (*Payload, error) {
+	// The builder continues asynchronously after this call returns. Own the
+	// root and argument values used by both the cache ID and every rebuild.
+	owned := *args
+	if args.ParentBeaconRoot != nil {
+		root := *args.ParentBeaconRoot
+		owned.ParentBeaconRoot = &root
+	}
+	args = &owned
 	// Build the initial version with no transaction included. It should be fast
 	// enough to run. The empty payload can at least make sure there is something
 	// to deliver for not missing slot.
 	emptyParams := &generateParams{
-		timestamp:   args.Timestamp,
-		forceTime:   true,
-		parentHash:  args.Parent,
-		coinbase:    args.FeeRecipient,
-		random:      args.Random,
-		withdrawals: args.Withdrawals,
-		noTxs:       true,
+		timestamp:        args.Timestamp,
+		forceTime:        true,
+		parentHash:       args.Parent,
+		coinbase:         args.FeeRecipient,
+		random:           args.Random,
+		withdrawals:      args.Withdrawals,
+		parentBeaconRoot: args.ParentBeaconRoot,
+		noTxs:            true,
 	}
 	empty := miner.generateWork(emptyParams)
 	if empty.err != nil {
@@ -204,13 +218,14 @@ func (miner *Miner) buildPayload(args *BuildPayloadArgs) (*Payload, error) {
 		endTimer := time.NewTimer(time.Second * beaconparams.SecondsPerSlot)
 
 		fullParams := &generateParams{
-			timestamp:   args.Timestamp,
-			forceTime:   true,
-			parentHash:  args.Parent,
-			coinbase:    args.FeeRecipient,
-			random:      args.Random,
-			withdrawals: args.Withdrawals,
-			noTxs:       false,
+			timestamp:        args.Timestamp,
+			forceTime:        true,
+			parentHash:       args.Parent,
+			coinbase:         args.FeeRecipient,
+			random:           args.Random,
+			withdrawals:      args.Withdrawals,
+			parentBeaconRoot: args.ParentBeaconRoot,
+			noTxs:            false,
 		}
 
 		for {
